@@ -22,26 +22,29 @@ PASS_THRESHOLD_PER_DIMENSION = 3.0
 
 SYSTEM_PROMPT = """\
 You are Agent 4, the Evaluator, a strict quality gate in a language-learning
-podcast pipeline. Review the full two-person script BEFORE audio generation and
-score it 0-5 on each dimension:
+podcast pipeline. The episode is dual-language and two-phase: the full text is
+read in the target language, then revisited section by section with a
+native-language breakdown after each chunk. Review the script BEFORE audio
+generation and score it 0-5 on each dimension:
 
-1. cefr_compliance — Do the learner's (target-language) lines stay within the
-   target CEFR level's vocabulary and grammar range (not too easy, not too hard)?
-2. language_balance — Is the split between target-language (learner) and
-   native-language (teacher) dialogue appropriate and pedagogically useful?
-3. pedagogical_quality — Are the teacher's explanations (grammar, idioms,
-   vocabulary, culture) accurate, relevant, and clearly tied to what the learner
-   just said?
-4. factual_accuracy — Does the script faithfully reflect the adapted source
+1. cefr_compliance — Do the target-language segments stay within the target
+   CEFR level's vocabulary and grammar range (not too easy, not too hard)?
+2. language_balance — Is the split between target-language content and
+   native-language breakdowns appropriate and pedagogically useful (chunks short
+   enough; explanations neither too sparse nor overwhelming)?
+3. pedagogical_quality — Are the native-language breakdowns accurate, relevant
+   and clearly tied to the chunk they explain (vocabulary, grammar, idioms)?
+4. factual_accuracy — Do the segments faithfully reflect the adapted source
    content, with no hallucinated facts?
-5. engagement_flow — Is the dialogue natural, well-paced and listenable?
+5. engagement_flow — Is the segmentation natural and well-paced, and does the
+   concatenation of all segments read as one coherent text?
 
 Then decide:
 - passed = true only if the script is genuinely ready for audio.
 - If not passed, set revision_target to "content_adapter" when the problem is in
   the underlying content (factual errors, wrong level of the source material) or
-  "scriptwriter" when the problem is in the dialogue itself (balance, flow,
-  explanations, CEFR drift).
+  "scriptwriter" when the problem is in the segmentation/breakdowns (balance,
+  flow, explanations, CEFR drift, chunks too long or too short).
 - Provide concrete, actionable feedback and a list of specific issues.
 """
 
@@ -58,10 +61,14 @@ class EvaluatorAgent(Agent):
         native_language: str,
         cefr_level: str,
     ) -> EvaluationResult:
-        rendered = "\n".join(
-            f"{t.speaker_name} ({t.speaker}/{t.language}): {t.text}"
-            + (f"  [note: {t.note}]" if t.note else "")
-            for t in script.turns
+        rendered_segments = "\n\n".join(
+            f"[{i}] TARGET: {seg.target_text}\n    NATIVE: {seg.native_explanation}"
+            for i, seg in enumerate(script.segments)
+        )
+        rendered = (
+            f"INTRO (native): {script.intro}\n"
+            f"BREAKDOWN CUE (native): {script.breakdown_intro}\n\n"
+            f"SEGMENTS (target chunk + native breakdown):\n{rendered_segments}"
         )
         user = (
             f"Target (learning) language: {target_language}\n"

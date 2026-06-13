@@ -86,7 +86,8 @@ class GoogleTTS:
                 len(pcm),
             )
             pcm_chunks.append(pcm)
-            pcm_chunks.append(silence_pcm(_TURN_GAP_SECONDS, _SAMPLE_RATE))
+            gap = seg.pause_after if seg.pause_after is not None else _TURN_GAP_SECONDS
+            pcm_chunks.append(silence_pcm(gap, _SAMPLE_RATE))
 
         if total_audio_bytes == 0:
             log.error(

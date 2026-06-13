@@ -517,65 +517,44 @@ audio {
   border-radius: 10px;
 }
 
-/* ---------- Script ---------- */
+/* ---------- Script (two-phase: full reading + breakdown) ---------- */
 .script {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.turn {
+.script-cue {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+}
+.full-reading {
+  background: var(--teal-soft);
+  border: 1px solid #cde9e4;
+  border-radius: 12px;
+  padding: 14px 16px;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.segment {
+  border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--line);
-  max-width: 88%;
+  background: var(--surface-2);
 }
-.turn-learner {
-  background: var(--teal-soft);
-  border-color: #cde9e4;
-  align-self: flex-start;
-}
-.turn-teacher {
-  background: var(--primary-soft);
-  border-color: #dcd9f3;
-  align-self: flex-end;
-}
-.turn-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 12px;
-}
-.turn-name {
-  font-weight: 700;
-}
-.lang-tag {
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
+.segment-target {
+  margin: 0 0 6px;
   font-weight: 600;
 }
-.lang-target {
-  background: var(--teal);
-  color: #fff;
-}
-.lang-native {
-  background: var(--primary);
-  color: #fff;
-}
-.turn-role {
-  color: var(--muted);
-}
-.turn-text {
+.segment-native {
   margin: 0;
-}
-.turn-note {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 8px;
-  padding: 6px 10px;
+  font-size: 14px;
+  color: var(--muted);
 }
 
 /* ---------- Adapted content ---------- */

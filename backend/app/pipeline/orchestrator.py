@@ -117,17 +117,50 @@ def _format_feedback(feedback: str, issues: list[str]) -> str:
 def _script_to_segments(
     script: PodcastScript, target_language: str, native_language: str
 ) -> list[SpeechSegment]:
+    """Build the dual-language, two-phase audio track.
+
+    1. Native-language intro (explains the format).
+    2. Full playback: every segment's target text, read near-seamlessly.
+    3. Native-language cue introducing the breakdown.
+    4. Segmented translation: each target chunk, then its native breakdown,
+       with a clear pause before the next chunk.
+
+    The target language uses a female voice (learner), the native language a
+    male voice (teacher/explainer).
+    """
     target_code = to_bcp47(target_language)
     native_code = to_bcp47(native_language)
+    TARGET_VOICE = "female"
+    NATIVE_VOICE = "male"
     segments: list[SpeechSegment] = []
-    for turn in script.turns:
-        # Gender follows the speaker (learner=female "girl", teacher=male "boy");
-        # the locale follows the language the line is spoken in.
-        gender = "female" if turn.speaker == "learner" else "male"
-        code = target_code if turn.language == "target" else native_code
+
+    if script.intro.strip():
         segments.append(
-            SpeechSegment(text=turn.text, language_code=code, gender=gender)
+            SpeechSegment(script.intro, native_code, NATIVE_VOICE, pause_after=0.7)
         )
+
+    # Phase 1 — full playback, uninterrupted (tiny gaps between chunks).
+    for seg in script.segments:
+        if seg.target_text.strip():
+            segments.append(
+                SpeechSegment(seg.target_text, target_code, TARGET_VOICE, pause_after=0.12)
+            )
+
+    if script.breakdown_intro.strip():
+        segments.append(
+            SpeechSegment(script.breakdown_intro, native_code, NATIVE_VOICE, pause_after=0.7)
+        )
+
+    # Phase 2 — segment, then its native-language breakdown, then a pause.
+    for seg in script.segments:
+        if seg.target_text.strip():
+            segments.append(
+                SpeechSegment(seg.target_text, target_code, TARGET_VOICE, pause_after=0.25)
+            )
+        if seg.native_explanation.strip():
+            segments.append(
+                SpeechSegment(seg.native_explanation, native_code, NATIVE_VOICE, pause_after=0.8)
+            )
     return segments
 
 

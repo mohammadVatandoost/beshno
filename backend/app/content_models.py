@@ -36,24 +36,39 @@ class AdaptedContent(BaseModel):
     key_vocabulary: list[KeyVocab] = Field(default_factory=list)
 
 
-class ScriptTurn(BaseModel):
-    """A single line of dialogue in the two-person podcast script."""
+class ContentSegment(BaseModel):
+    """One short chunk of the content paired with its native-language breakdown."""
 
-    speaker: Literal["learner", "teacher"]
-    speaker_name: str = Field(description="Display name, e.g. 'Mia' or 'Leo'")
-    language: Literal["target", "native"]
-    text: str
-    note: Optional[str] = Field(
-        default=None,
-        description="Optional teaching note attached to this line (grammar/idiom/culture)",
+    target_text: str = Field(
+        description="A short, self-contained chunk of the content in the target "
+        "(learning) language, at the learner's CEFR level"
+    )
+    native_explanation: str = Field(
+        description="A breakdown of that chunk in the learner's NATIVE language — "
+        "key vocabulary, grammar, idioms and meaning, tied to what was just said"
     )
 
 
 class PodcastScript(BaseModel):
-    """Output of the Scriptwriter agent — the full two-voice dialogue."""
+    """Output of the Scriptwriter agent — a dual-language, two-phase episode.
+
+    Phase 1 (full playback) reads every segment's ``target_text`` in order,
+    smoothly and uninterrupted, in the target language. Phase 2 (segmented
+    translation) replays each segment followed by its ``native_explanation``.
+    """
 
     title: str
-    turns: list[ScriptTurn] = Field(default_factory=list)
+    intro: str = Field(
+        default="",
+        description="A short spoken intro in the NATIVE language: welcomes the "
+        "listener, names the topic, and explains the two-part format",
+    )
+    breakdown_intro: str = Field(
+        default="",
+        description="A short NATIVE-language cue spoken between the two phases, "
+        "e.g. 'Now let's go through it piece by piece.'",
+    )
+    segments: list[ContentSegment] = Field(default_factory=list)
 
 
 class EvaluationScores(BaseModel):

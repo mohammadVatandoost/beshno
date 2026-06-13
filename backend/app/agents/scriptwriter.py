@@ -1,44 +1,52 @@
 """Agent 3 — Scriptwriter.
 
-Transforms the adapted summary into an engaging two-person podcast script:
+Turns the adapted summary into a DUAL-LANGUAGE, two-phase episode designed for
+language comprehension:
 
-- Learner speaker (the "girl"): speaks primarily in the TARGET language at the
-  learner's CEFR level.
-- Teacher speaker (the "boy"): speaks in the learner's NATIVE language, acting
-  as a teacher who explains grammar points, difficult words, idioms and
-  cultural context introduced by the learner's lines.
+- Phase 1 (full playback): the whole content read smoothly and uninterrupted in
+  the target (learning) language.
+- Phase 2 (segmented translation): the same content revisited section by
+  section — after each short target-language chunk, a breakdown/explanation in
+  the learner's native language.
+
+The script is a list of ``ContentSegment``s (target chunk + native breakdown);
+the orchestrator reads all target chunks first (Phase 1), then replays each
+chunk followed by its breakdown (Phase 2).
 """
 
 from __future__ import annotations
 
-from ..content_models import AdaptedContent, PodcastScript, ScriptTurn
+from ..content_models import AdaptedContent, ContentSegment, PodcastScript
 from .base import Agent
 
-LEARNER_NAME = "Mia"
-TEACHER_NAME = "Leo"
-
-SYSTEM_PROMPT = f"""\
+SYSTEM_PROMPT = """\
 You are Agent 3, the Scriptwriter, in a language-learning podcast pipeline.
 
-Turn the adapted content into a natural, engaging two-person podcast dialogue.
+Turn the adapted content into a DUAL-LANGUAGE, two-phase podcast. The audio will
+first read the whole text in the target language (full playback), then revisit
+it section by section with a native-language breakdown after each part. Produce:
 
-Speakers:
-- "{LEARNER_NAME}" (speaker = "learner", language = "target"): speaks in the
-  TARGET language at the learner's CEFR level. She presents the content
-  conversationally, sentence by sentence.
-- "{TEACHER_NAME}" (speaker = "teacher", language = "native"): speaks in the
-  learner's NATIVE language. After {LEARNER_NAME}'s lines, he acts as a teacher:
-  explaining difficult words, grammar points, idioms and cultural context she
-  just used, and occasionally asking her to continue.
+- intro: a short spoken introduction in the learner's NATIVE language. Welcome
+  the listener, name the topic, and explain the format: first they'll hear the
+  whole text read in the target language, then a section-by-section breakdown.
+- breakdown_intro: a short NATIVE-language cue spoken between the two phases
+  (e.g. "Now let's go through it piece by piece.").
+- segments: an ordered list that, read end to end, conveys the full adapted
+  content in the TARGET language. Each segment has:
+    - target_text: ONE short, self-contained chunk (about 1-3 sentences) in the
+      TARGET language, at the learner's CEFR level.
+    - native_explanation: a breakdown of THAT chunk in the learner's NATIVE
+      language — explain key vocabulary, grammar, idioms and meaning, tied to
+      exactly what was said in target_text.
 
 Rules:
-- Alternate naturally; the teacher should react to what the learner actually said.
-- Keep the learner's language within the CEFR level.
-- The teacher's explanations must be accurate and tied to the learner's lines.
-- Aim for a balanced, pedagogically useful split (roughly half/half).
-- Open with a short friendly intro and close with a brief wrap-up.
-- Set language="target" for the learner's lines and language="native" for the
-  teacher's lines. Put short teaching annotations in the optional "note" field.
+- The concatenation of all target_text must read smoothly as one coherent text
+  (the full playback) and stay faithful to the adapted content. Do not add
+  facts that are not in the adapted content.
+- Keep every target_text strictly within the CEFR level.
+- Keep segments short enough that each breakdown is easy to follow.
+- Write intro and breakdown_intro and every native_explanation in the NATIVE
+  language; write every target_text in the TARGET language.
 
 If revision feedback is provided, address every point in it.
 """
@@ -89,62 +97,38 @@ class ScriptwriterAgent(Agent):
         native_language: str,
         cefr_level: str,
     ) -> PodcastScript:
-        turns: list[ScriptTurn] = [
-            ScriptTurn(
-                speaker="teacher",
-                speaker_name=TEACHER_NAME,
-                language="native",
-                text=(
-                    f"[in {native_language}] Welcome! Today {LEARNER_NAME} will tell us "
-                    f"about \"{adapted.title}\" in {target_language}. I'll jump in to "
-                    f"explain the tricky parts."
-                ),
-            ),
-            ScriptTurn(
-                speaker="learner",
-                speaker_name=LEARNER_NAME,
-                language="target",
-                text=f"[in {target_language}] {adapted.adapted_text.splitlines()[-1][:200]}",
-            ),
+        # Split the adapted text into a few sentence-ish chunks; fall back to key
+        # points or the title so there is always at least one segment.
+        sentences = [
+            s.strip()
+            for s in adapted.adapted_text.replace("\n", " ").split(".")
+            if s.strip()
         ]
-        for point in adapted.key_points[:3]:
-            turns.append(
-                ScriptTurn(
-                    speaker="learner",
-                    speaker_name=LEARNER_NAME,
-                    language="target",
-                    text=f"[in {target_language}] {point}",
+        chunks = sentences[:6] or adapted.key_points[:6] or [adapted.title]
+        vocab = adapted.key_vocabulary
+
+        segments: list[ContentSegment] = []
+        for i, chunk in enumerate(chunks):
+            v = vocab[i % len(vocab)] if vocab else None
+            explanation = f"[in {native_language}] This part means: {chunk}."
+            if v:
+                explanation += f" Note the word '{v.term}' — {v.meaning}."
+            segments.append(
+                ContentSegment(
+                    target_text=f"[in {target_language}] {chunk}.",
+                    native_explanation=explanation,
                 )
             )
-            turns.append(
-                ScriptTurn(
-                    speaker="teacher",
-                    speaker_name=TEACHER_NAME,
-                    language="native",
-                    text=(
-                        f"[in {native_language}] Nicely said. Notice the vocabulary she "
-                        f"used there — let me explain what it means."
-                    ),
-                    note="Vocabulary explanation",
-                )
-            )
-        if adapted.key_vocabulary:
-            v = adapted.key_vocabulary[0]
-            turns.append(
-                ScriptTurn(
-                    speaker="teacher",
-                    speaker_name=TEACHER_NAME,
-                    language="native",
-                    text=f"[in {native_language}] For example, '{v.term}' means {v.meaning}.",
-                    note=f"Key term: {v.term}",
-                )
-            )
-        turns.append(
-            ScriptTurn(
-                speaker="teacher",
-                speaker_name=TEACHER_NAME,
-                language="native",
-                text=f"[in {native_language}] Great work today. Keep practising your {target_language}!",
-            )
+
+        return PodcastScript(
+            title=adapted.title,
+            intro=(
+                f"[in {native_language}] Welcome! Today's topic is "
+                f"\"{adapted.title}\". First, listen to the whole text in "
+                f"{target_language}. Then we'll go through it piece by piece."
+            ),
+            breakdown_intro=(
+                f"[in {native_language}] Now let's break it down section by section."
+            ),
+            segments=segments,
         )
-        return PodcastScript(title=adapted.title, turns=turns)

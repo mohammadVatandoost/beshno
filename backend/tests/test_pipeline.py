@@ -36,7 +36,7 @@ def test_full_pipeline_with_mocks():
     assert podcast.current_stage == Stage.DONE.value
     assert podcast.selected_sources, "sources should be selected"
     assert podcast.adapted_content is not None
-    assert podcast.script is not None and podcast.script["turns"]
+    assert podcast.script is not None and podcast.script["segments"]
     assert podcast.audio_filename
     assert podcast.audio_duration_seconds and podcast.audio_duration_seconds > 0
     assert len(podcast.evaluations) >= 1
@@ -93,7 +93,7 @@ def test_api_create_status_and_audio():
 
         detail = client.get(f"/api/podcasts/{pid}")
         assert detail.status_code == 200
-        assert detail.json()["script"]["turns"]
+        assert detail.json()["script"]["segments"]
         assert detail.json()["has_audio"] is True
 
         audio = client.get(f"/api/podcasts/{pid}/audio")

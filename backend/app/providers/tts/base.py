@@ -11,6 +11,9 @@ class SpeechSegment:
     text: str
     language_code: str  # BCP-47, e.g. "en-US"
     gender: Literal["female", "male"]
+    # Silence (seconds) to append after this segment. None -> provider default.
+    # Small values make a sequence play near-seamlessly; larger values add pauses.
+    pause_after: float | None = None
 
 
 @dataclass

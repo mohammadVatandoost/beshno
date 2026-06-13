@@ -28,7 +28,8 @@ class MockTTS:
         for seg in segments:
             spoken = max(0.8, min(25.0, len(seg.text) * _SECONDS_PER_CHAR))
             pcm_chunks.append(silence_pcm(spoken, _SAMPLE_RATE))
-            pcm_chunks.append(silence_pcm(_TURN_GAP_SECONDS, _SAMPLE_RATE))
+            gap = seg.pause_after if seg.pause_after is not None else _TURN_GAP_SECONDS
+            pcm_chunks.append(silence_pcm(gap, _SAMPLE_RATE))
 
         write_wav(out_path, pcm_chunks, _SAMPLE_RATE)
         duration = duration_of(pcm_chunks, _SAMPLE_RATE)

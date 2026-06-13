@@ -34,17 +34,16 @@ export interface AdaptedContent {
   key_vocabulary: KeyVocab[];
 }
 
-export interface ScriptTurn {
-  speaker: "learner" | "teacher";
-  speaker_name: string;
-  language: "target" | "native";
-  text: string;
-  note?: string | null;
+export interface ContentSegment {
+  target_text: string;
+  native_explanation: string;
 }
 
 export interface PodcastScript {
   title: string;
-  turns: ScriptTurn[];
+  intro: string;
+  breakdown_intro: string;
+  segments: ContentSegment[];
 }
 
 export interface EvaluationScores {
