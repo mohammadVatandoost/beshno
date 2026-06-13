@@ -40,17 +40,21 @@ def search_topic(
         ),
     ],
     max_results: Annotated[
-        int, Field(description="Maximum number of results to return.", ge=1, le=20)
+        int,
+        Field(description="Maximum number of results to return (max 10).", ge=1, le=10),
     ] = 10,
 ) -> dict:
     """Search the web for reliable, substantive resources about a topic.
 
     Returns a list of results, each with a title, URL, relevance score, and the
     page content. Call this to gather source material before selecting the best
-    references; you may call it more than once with refined queries.
+    references; you may call it more than once with refined queries. Research is
+    capped at a total of 10 sources.
     """
     settings = get_settings()
     search = get_search(settings)
+    # Never fetch more than the configured research source limit per call.
+    max_results = min(max_results, settings.search_max_results)
     results = search.search(query, language=language, max_results=max_results)
     log.info("search_topic(%r, language=%r) -> %d results", query, language, len(results))
     return {

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +17,7 @@ from ..database import get_db
 from ..enums import CEFRLevel, PODCAST_DURATIONS, PodcastStatus, Stage, tone_options
 from ..languages import COMMON_LANGUAGES
 from ..models import AgentStep, ExerciseAttempt, Podcast
-from ..pipeline import generate_podcast
+from ..pipeline import submit_generation
 from ..providers import get_llm
 from ..schemas import (
     AgentStepOut,
@@ -31,6 +32,8 @@ from ..schemas import (
 from ..storage import Storage
 
 router = APIRouter(prefix="/api")
+
+log = logging.getLogger(__name__)
 
 TOPIC_CATEGORIES = [
     "Technology",
@@ -74,7 +77,6 @@ def meta() -> MetaOut:
 @router.post("/podcasts", response_model=PodcastDetail, status_code=201)
 def create_podcast(
     payload: PodcastCreate,
-    background: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> Podcast:
     podcast = Podcast(
@@ -93,8 +95,16 @@ def create_podcast(
     db.commit()
     db.refresh(podcast)
 
-    # Kick off the multi-agent pipeline in the background (threadpool for sync fn).
-    background.add_task(generate_podcast, podcast.id)
+    log.info(
+        "podcast %s created (%s -> %s, %s); queued for background generation",
+        podcast.id,
+        payload.native_language,
+        payload.target_language,
+        payload.cefr_level.value,
+    )
+    # Dispatch to the dedicated generation worker pool and return immediately —
+    # the HTTP response does not wait for the agents to run.
+    submit_generation(podcast.id)
     return podcast
 
 

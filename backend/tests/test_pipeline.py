@@ -343,3 +343,136 @@ def test_tone_selection():
         d2 = client.get(f"/api/podcasts/{r2.json()['id']}").json()
         assert d2["tone"] == "auto"
         assert d2["resolved_tone"] == "nerdy"  # tech topic -> nerdy
+
+
+def test_research_source_cap():
+    """The research step never gathers more than its source cap, across calls."""
+    from app.mcp.client import TopicRetrievalMCP
+
+    class _FakeResult:
+        def __init__(self, results):
+            self.structuredContent = {"results": results}
+            self.content: list = []
+
+    mcp = TopicRetrievalMCP(max_sources=3)
+    batch1 = [
+        {"url": f"https://a/{i}", "title": f"t{i}", "content": "c", "score": 0.5}
+        for i in range(5)
+    ]
+    mcp._record_and_format(_FakeResult(batch1))
+    assert len(mcp.gathered) == 3  # capped at max_sources
+
+    # A second search cannot push past the cap.
+    batch2 = [
+        {"url": f"https://b/{i}", "title": f"u{i}", "content": "c", "score": 0.4}
+        for i in range(4)
+    ]
+    msg = mcp._record_and_format(_FakeResult(batch2))
+    assert len(mcp.gathered) == 3
+    assert "Source limit reached" in msg
+
+
+def test_submit_generation_runs_pipeline():
+    """submit_generation dispatches the pipeline (eager mode in tests -> inline)."""
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import Podcast
+    from app.pipeline import submit_generation
+
+    init_db()
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="Spanish",
+        cefr_level="A2",
+        topic_description="clouds",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    submit_generation(pid)  # eager in tests -> runs synchronously inline
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    assert podcast.status in (
+        PodcastStatus.READY.value,
+        PodcastStatus.NEEDS_REVIEW.value,
+    )
+    assert podcast.current_stage == Stage.DONE.value
+    db.close()
+
+
+def test_audio_and_exercises_run_in_parallel(monkeypatch):
+    """Stage 6 (TTS) and Stage 7 (exercises) overlap in time.
+
+    A 2-party barrier is the proof of concurrency: both tasks must be in-flight
+    simultaneously to pass it. If the orchestrator ran them sequentially, the
+    first task would block on the barrier and time out (BrokenBarrierError),
+    leaving ``overlapped`` False and failing the assertion.
+    """
+    import threading
+
+    from app.agents import ExerciseGeneratorAgent
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import Podcast
+    from app.pipeline import submit_generation
+    from app.providers.tts.mock import MockTTS
+
+    rendezvous = threading.Barrier(2, timeout=8)
+    state = {"overlapped": False}
+
+    orig_synth = MockTTS.synthesize
+
+    def synth(self, segments, *, out_path):
+        try:
+            rendezvous.wait()
+            state["overlapped"] = True
+        except threading.BrokenBarrierError:
+            pass
+        return orig_synth(self, segments, out_path=out_path)
+
+    orig_run = ExerciseGeneratorAgent.run
+
+    def run(self, **kwargs):
+        try:
+            rendezvous.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return orig_run(self, **kwargs)
+
+    monkeypatch.setattr(MockTTS, "synthesize", synth)
+    monkeypatch.setattr(ExerciseGeneratorAgent, "run", run)
+
+    init_db()
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="German",
+        cefr_level="A2",
+        topic_description="parallel finalize",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    submit_generation(pid)  # eager -> inline; inner pool runs the two tasks
+
+    assert state["overlapped"], "audio and exercises did not run concurrently"
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    assert podcast.audio_filename  # audio synthesis still produced output
+    assert podcast.exercises  # exercises still produced output
+    completed = {e["stage"] for e in podcast.stage_history if e["state"] == "completed"}
+    assert {"generating_audio", "exercises"} <= completed
+    db.close()

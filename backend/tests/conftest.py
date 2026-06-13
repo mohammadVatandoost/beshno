@@ -15,3 +15,5 @@ os.environ["TTS_PROVIDER"] = "mock"
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
 os.environ["STORAGE_DIR"] = _tmp
 os.environ["MAX_REVISIONS"] = "2"
+# Run generation inline/synchronously in tests for deterministic assertions.
+os.environ["PIPELINE_WORKERS"] = "0"

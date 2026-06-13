@@ -54,9 +54,22 @@ def mcp_unavailable() -> str | None:
 class TopicRetrievalMCP:
     """Context manager owning an MCP session to the topic-retrieval server."""
 
-    def __init__(self, *, startup_timeout: float = 30.0, call_timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        *,
+        startup_timeout: float = 30.0,
+        call_timeout: float = 60.0,
+        max_sources: int | None = None,
+    ) -> None:
+        from ..config import get_settings
+
         self._startup_timeout = startup_timeout
         self._call_timeout = call_timeout
+        # Hard cap on the total number of sources retrieved during research,
+        # across however many search calls the agent makes.
+        self._max_sources = (
+            max_sources if max_sources is not None else get_settings().search_max_results
+        )
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session: Any = None
@@ -141,14 +154,27 @@ class TopicRetrievalMCP:
     def _record_and_format(self, result: Any) -> str:
         payload = self._payload(result)
         results = payload.get("results", []) if isinstance(payload, dict) else []
+        # Cache results only up to the research source cap (across all calls).
+        kept = []
         for item in results:
             url = item.get("url")
-            if url:
+            if not url:
+                continue
+            if url in self.gathered:
+                kept.append(item)
+            elif len(self.gathered) < self._max_sources:
                 self.gathered[url] = item
-        if not results:
+                kept.append(item)
+            # else: cap reached — ignore this new source.
+        if not kept:
+            if len(self.gathered) >= self._max_sources:
+                return (
+                    f"Source limit reached ({self._max_sources} sources gathered). "
+                    f"Stop searching and select the best from what you already have."
+                )
             return "No results found. Try a different or broader query."
         lines = []
-        for i, item in enumerate(results):
+        for i, item in enumerate(kept):
             content = (item.get("content") or "")[:_EXCERPT_CHARS]
             lines.append(
                 f"[{i}] {item.get('title') or item.get('url')}\n"

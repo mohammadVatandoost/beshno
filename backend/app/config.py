@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # retrieval): the max number of LLM turns before a final answer is forced.
     # Use >= 2 so the agent gets at least one tool call before answering.
     agent_max_steps: int = 3
+    # Background worker threads that run the generation pipeline off the request
+    # path. 0 (or less) runs generation inline/synchronously (used by tests).
+    pipeline_workers: int = 4
 
     # --- Storage ------------------------------------------------------------
     storage_dir: str = "./storage"

@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -556,20 +557,64 @@ def _run(
             feedback_for_script = feedback
         db.commit()
 
-    # --- Stage 6: audio generation -----------------------------------------
+    # --- Stages 6 & 7: audio + exercises, IN PARALLEL ----------------------
+    # The script has passed, so TTS synthesis (Stage 6) and the Exercise
+    # Generator (Stage 7) are now independent: audio needs the finished script,
+    # while exercises only need the AdaptedContent from Agent 2. Audio synthesis
+    # is the long pole (per-segment network round-trips), so we run both on a
+    # small thread pool — generating the quiz alongside the audio is effectively
+    # free. Both tasks are pure compute (they touch no DB and no shared mutable
+    # state); the orchestrator thread persists their results sequentially below,
+    # which keeps the single DB session and stage history race-free.
     _start_stage(db, podcast, Stage.GENERATING_AUDIO)
-    t0 = time.perf_counter()
+    _append_event(podcast, Stage.EXERCISES, StageState.STARTED)
+    db.commit()
+
     segments = _script_to_segments(
         script, target, native, immersion=is_immersion_level(cefr)
     )
     out_path = storage.audio_path(podcast.id, "wav")
     log.info(
-        "podcast=%s synthesizing %d segment(s) via %s",
+        "podcast=%s generating audio (%d segments via %s) + exercises in parallel",
         podcast.id,
         len(segments),
         tts.name,
     )
-    result = tts.synthesize(segments, out_path=out_path)
+
+    def _audio_task():
+        t0 = time.perf_counter()
+        res = tts.synthesize(segments, out_path=out_path)
+        return res, int((time.perf_counter() - t0) * 1000)
+
+    def _exercise_task():
+        t0 = time.perf_counter()
+        ex = ExerciseGeneratorAgent(llm).run(
+            topic=topic,
+            target_language=target,
+            native_language=native,
+            cefr_level=cefr,
+            adapted=adapted,
+        )
+        return ex, int((time.perf_counter() - t0) * 1000)
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="beshno-finalize") as pool:
+        audio_future = pool.submit(_audio_task)
+        exercise_future = pool.submit(_exercise_task)
+
+        # Audio is required: a failure here fails the whole podcast.
+        audio_error = audio_future.exception()
+        if audio_error is not None:
+            raise audio_error
+        result, audio_ms = audio_future.result()
+
+        # Exercises are a bonus: a failure must never fail the podcast.
+        try:
+            exercises, exercise_ms = exercise_future.result()
+            exercise_error: str | None = None
+        except Exception as exc:  # noqa: BLE001
+            exercises, exercise_ms, exercise_error = None, 0, str(exc)
+
+    # --- Persist audio (Stage 6) -------------------------------------------
     podcast.audio_filename = os.path.basename(result.path)
     podcast.audio_format = result.format
     podcast.audio_duration_seconds = result.duration_seconds
@@ -595,24 +640,16 @@ def _run(
             "filename": podcast.audio_filename,
         },
         detail=f"{result.duration_seconds:.0f}s via {tts.name}",
-        duration_ms=int((time.perf_counter() - t0) * 1000),
+        duration_ms=audio_ms,
     )
     step_no += 1
 
-    # --- Stage 7: interactive exercises (non-fatal) ------------------------
-    # A bonus practice session; if it fails the podcast is still delivered.
-    try:
-        _start_stage(db, podcast, Stage.EXERCISES)
-        t0 = time.perf_counter()
-        exercises = ExerciseGeneratorAgent(llm).run(
-            topic=topic,
-            target_language=target,
-            native_language=native,
-            cefr_level=cefr,
-            adapted=adapted,
-        )
+    # --- Persist exercises (Stage 7, non-fatal) ----------------------------
+    if exercises is not None:
         podcast.exercises = exercises.model_dump()
-        _complete_stage(db, podcast, Stage.EXERCISES, "5 exercises created")
+        _complete_stage(
+            db, podcast, Stage.EXERCISES, "5 exercises created (parallel with audio)"
+        )
         _log_step(
             db,
             podcast,
@@ -620,14 +657,27 @@ def _run(
             agent=ExerciseGeneratorAgent.name,
             stage=Stage.EXERCISES,
             output=exercises.model_dump(),
-            duration_ms=int((time.perf_counter() - t0) * 1000),
+            duration_ms=exercise_ms,
         )
         step_no += 1
-    except Exception as exc:  # noqa: BLE001 - exercises must never fail the podcast
-        log.warning(
-            "podcast=%s exercise generation failed (non-fatal): %s", podcast.id, exc
+        log.info(
+            "podcast=%s parallel finalize done (audio=%dms, exercises=%dms, "
+            "wall≈%dms vs %dms sequential)",
+            podcast.id,
+            audio_ms,
+            exercise_ms,
+            max(audio_ms, exercise_ms),
+            audio_ms + exercise_ms,
         )
-        _append_event(podcast, Stage.EXERCISES, StageState.FAILED, str(exc)[:200])
+    else:
+        log.warning(
+            "podcast=%s exercise generation failed (non-fatal): %s",
+            podcast.id,
+            exercise_error,
+        )
+        _append_event(
+            podcast, Stage.EXERCISES, StageState.FAILED, (exercise_error or "")[:200]
+        )
         db.commit()
 
     # --- Record newly-taught vocabulary for spaced repetition --------------

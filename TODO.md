@@ -6,8 +6,8 @@
 - [x] user able to set the length of the podcast
 - [*] saved the described words in the listened podcast in db table and use it in the next podcast generation loop to avoid describing again. you can create mcp for this table and use it in the multi-agent architecture
 - user can change the speed of the audio playing
-
-- for researching topic add limit of 10
+- calculate token consumption and time for generating in each podcast. and store it in the db and show it the end of the podcast  page.
+- [x]for researching topic add limit of 10
 tech debts:
 - [x] create mcp for the topic retrieval API
 - [x] set step budget for the agent loop
