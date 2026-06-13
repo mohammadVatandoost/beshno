@@ -110,3 +110,51 @@ def test_api_create_status_and_audio():
         assert body, "steps endpoint should return logged agent steps"
         assert body[0]["step_index"] == 0
         assert {"search_filter", "scriptwriter"} <= {s["agent"] for s in body}
+
+
+def test_immersion_for_advanced_levels():
+    """B2+ episodes must be 100% target language (no native explanation runs)."""
+    from app.content_models import PodcastScript
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import Podcast
+    from app.pipeline import generate_podcast
+    from app.pipeline.orchestrator import _script_to_segments
+
+    init_db()
+
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="Spanish",
+        cefr_level="C1",
+        topic_category="Science",
+        topic_description="black holes",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    generate_podcast(pid)
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    assert podcast.status in (
+        PodcastStatus.READY.value,
+        PodcastStatus.NEEDS_REVIEW.value,
+    )
+    assert podcast.script and podcast.script["segments"]
+    # Immersion: every explanation run must be in the target language.
+    for seg in podcast.script["segments"]:
+        for run in seg["native_explanation"]:
+            assert run["lang"] == "target", "immersion must omit the native language"
+
+    # The audio track is entirely the target locale (no native-locale segments).
+    script = PodcastScript(**podcast.script)
+    segs = _script_to_segments(script, "Spanish", "English", immersion=True)
+    assert segs and all(s.language_code == "es-ES" for s in segs)
+    db.close()

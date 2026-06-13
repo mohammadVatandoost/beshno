@@ -22,6 +22,9 @@ export default function ScriptView({ script }: { script: PodcastScript }) {
           const runs = Array.isArray(seg.native_explanation)
             ? seg.native_explanation
             : [];
+          // Only highlight target words when they stand out inside a native
+          // breakdown. In immersion mode every run is target, so don't highlight.
+          const hasNative = runs.some((r) => r.lang === "native");
           return (
             <div key={i} className="segment">
               <p className="segment-target">{seg.target_text}</p>
@@ -30,7 +33,9 @@ export default function ScriptView({ script }: { script: PodcastScript }) {
                 {runs.map((run, j) => (
                   <span
                     key={j}
-                    className={run.lang === "target" ? "run-target" : undefined}
+                    className={
+                      run.lang === "target" && hasNative ? "run-target" : undefined
+                    }
                   >
                     {run.text}{" "}
                   </span>

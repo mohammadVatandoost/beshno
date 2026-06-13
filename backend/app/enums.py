@@ -68,3 +68,12 @@ STAGE_LABELS: dict[Stage, str] = {
     Stage.GENERATING_AUDIO: "Generating audio",
     Stage.DONE: "Ready",
 }
+
+# Advanced levels get a monolingual, target-language-only ("immersion") episode;
+# A1/A2/B1 get the dual-language (target + native breakdown) episode.
+_IMMERSION_LEVELS = {"B2", "C1", "C2"}
+
+
+def is_immersion_level(cefr_level: str) -> bool:
+    """True for levels above B1, where the episode is 100% in the target language."""
+    return (cefr_level or "").strip().upper() in _IMMERSION_LEVELS
