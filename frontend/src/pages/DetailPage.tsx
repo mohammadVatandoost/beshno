@@ -4,6 +4,7 @@ import AudioPlayer from "../components/AudioPlayer";
 import ExercisesPanel from "../components/ExercisesPanel";
 import GenerationStatus from "../components/GenerationStatus";
 import ScriptView from "../components/ScriptView";
+import SyncedTranscript from "../components/SyncedTranscript";
 import StatusBadge from "../components/StatusBadge";
 import { usePodcast } from "../hooks/usePodcast";
 import type { Evaluation } from "../types";
@@ -137,23 +138,36 @@ export default function DetailPage() {
         </div>
       )}
 
-      {/* Player */}
-      {finished && p.has_audio && id && (
+      {/* Audio + synced transcript (karaoke). Falls back to a plain player and
+          static transcript for podcasts generated before timed cues existed. */}
+      {finished && p.has_audio && id && p.transcript && p.transcript.length > 0 ? (
         <section className="card">
-          <AudioPlayer
+          <h2 className="section-title">Listen & follow along</h2>
+          <SyncedTranscript
             src={api.audioUrl(id)}
             title={p.title || p.topic_description}
+            cues={p.transcript}
             durationSeconds={p.audio_duration_seconds}
           />
         </section>
-      )}
-
-      {/* Script */}
-      {finished && p.script && (
-        <section className="card">
-          <h2 className="section-title">Transcript</h2>
-          <ScriptView script={p.script} />
-        </section>
+      ) : (
+        <>
+          {finished && p.has_audio && id && (
+            <section className="card">
+              <AudioPlayer
+                src={api.audioUrl(id)}
+                title={p.title || p.topic_description}
+                durationSeconds={p.audio_duration_seconds}
+              />
+            </section>
+          )}
+          {finished && p.script && (
+            <section className="card">
+              <h2 className="section-title">Transcript</h2>
+              <ScriptView script={p.script} />
+            </section>
+          )}
+        </>
       )}
 
       {/* Interactive exercises */}

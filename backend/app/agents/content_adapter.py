@@ -32,6 +32,9 @@ CEFR level. Requirements:
 - Produce: a short title, the adapted text, 3-6 key points, and a list of
   key vocabulary terms with concise explanations in the learner's NATIVE
   language.
+- Avoid re-introducing vocabulary the learner already knows: do NOT choose,
+  define, or build key vocabulary around any words listed under "ALREADY-TAUGHT
+  WORDS". Pick fresh, level-appropriate words the learner has not seen yet.
 
 If revision feedback is provided, address every point in it.
 """
@@ -49,10 +52,21 @@ class ContentAdapterAgent(Agent):
         cefr_level: str,
         materials: str,
         feedback: str | None = None,
+        owner: str = "default",
+        learned_vocab_mcp=None,
     ) -> AdaptedContent:
         guidance = _CEFR_GUIDANCE.get(cefr_level, "")
         feedback_block = (
             f"\n\nREVISION FEEDBACK to address:\n{feedback}\n" if feedback else ""
+        )
+        # Query the learned-vocabulary MCP server to avoid repeating words.
+        avoid = self.fetch_avoid_terms(learned_vocab_mcp, owner, target_language)
+        avoid_block = (
+            "\n\nALREADY-TAUGHT WORDS — the learner already knows these; do NOT "
+            "reuse, define, or build key vocabulary around them, choose fresh words "
+            "instead:\n" + ", ".join(avoid) + "\n"
+            if avoid
+            else ""
         )
         user = (
             f"Topic: {topic}\n"
@@ -61,6 +75,7 @@ class ContentAdapterAgent(Agent):
             f"CEFR level: {cefr_level} — {guidance}\n\n"
             f"Source material (from selected resources):\n{materials[:16000]}"
             f"{feedback_block}"
+            f"{avoid_block}"
         )
 
         mock = AdaptedContent(

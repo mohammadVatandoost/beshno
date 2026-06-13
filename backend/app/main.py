@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import __version__
 from .api.routes_podcasts import router
@@ -17,6 +18,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+
+log = logging.getLogger("beshno")
 
 settings = get_settings()
 
@@ -56,6 +59,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log every unhandled error with a full traceback, then return a 500.
+
+    Without this, an exception in an endpoint can surface to the client as a bare
+    500 while leaving little in the server logs. We log method + path + traceback
+    so failures are always diagnosable.
+    """
+    log.error(
+        "Unhandled error on %s %s", request.method, request.url.path, exc_info=exc
+    )
+    return JSONResponse(
+        status_code=500, content={"detail": "Internal server error"}
+    )
+
 
 app.include_router(router)
 

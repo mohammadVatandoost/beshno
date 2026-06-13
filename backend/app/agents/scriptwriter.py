@@ -113,12 +113,23 @@ class ScriptwriterAgent(Agent):
         native_language: str,
         cefr_level: str,
         feedback: str | None = None,
+        owner: str = "default",
+        learned_vocab_mcp=None,
     ) -> PodcastScript:
         immersion = is_immersion_level(cefr_level)
         vocab = "\n".join(f"- {v.term}: {v.meaning}" for v in adapted.key_vocabulary)
         points = "\n".join(f"- {p}" for p in adapted.key_points)
         feedback_block = (
             f"\n\nREVISION FEEDBACK to address:\n{feedback}\n" if feedback else ""
+        )
+        # Query the learned-vocabulary MCP server to avoid re-teaching words.
+        avoid = self.fetch_avoid_terms(learned_vocab_mcp, owner, target_language)
+        avoid_block = (
+            "\n\nALREADY-TAUGHT WORDS — the learner already knows these; do NOT "
+            "focus the breakdowns/explanations on them or re-teach them, prefer "
+            "introducing fresh vocabulary:\n" + ", ".join(avoid) + "\n"
+            if avoid
+            else ""
         )
         mode_line = (
             f"Mode: FULL IMMERSION (level {cefr_level} is advanced) — everything "
@@ -137,6 +148,7 @@ class ScriptwriterAgent(Agent):
             f"Key points:\n{points}\n\n"
             f"Key vocabulary:\n{vocab}"
             f"{feedback_block}"
+            f"{avoid_block}"
         )
 
         system = SYSTEM_PROMPT_IMMERSION if immersion else SYSTEM_PROMPT_DUAL

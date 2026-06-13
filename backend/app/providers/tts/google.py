@@ -15,14 +15,21 @@ Persian) gracefully fall back to whatever is available.
 from __future__ import annotations
 
 import logging
+import time
 
-from .base import SpeechSegment, SynthesisResult
-from .wavutil import duration_of, pcm_from_audio, silence_pcm, write_wav
+from .base import SegmentTiming, SpeechSegment, SynthesisResult
+from .wavutil import bytes_to_seconds, duration_of, pcm_from_audio, silence_pcm, write_wav
 
 log = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 24000
 _TURN_GAP_SECONDS = 0.45
+
+# Transient-error retry. Google TTS occasionally returns 503/500/timeout; a
+# single blip should not abort the whole podcast, so retry with backoff.
+_MAX_RETRIES = 4
+_RETRY_BASE_DELAY = 1.0  # seconds; doubles each attempt
+_RETRY_MAX_DELAY = 12.0
 
 # Voice-name substrings ranked by naturalness, best first. The first token that
 # appears (case-insensitively) in a voice name decides its tier; anything
@@ -51,6 +58,16 @@ class GoogleTTS:
     def __init__(self, api_key: str | None = None) -> None:
         # Imported lazily so the package isn't a hard dependency for mock runs.
         from google.cloud import texttospeech
+
+        # Predicate that recognizes retryable (transient) API errors —
+        # ServiceUnavailable (503), InternalServerError (500), TooManyRequests
+        # (429), DeadlineExceeded, etc.
+        try:
+            from google.api_core import retry as garetry
+
+            self._is_transient = garetry.if_transient_error
+        except Exception:  # pragma: no cover - defensive
+            self._is_transient = lambda exc: False  # noqa: E731
 
         self._tts = texttospeech
         if api_key:
@@ -137,11 +154,40 @@ class GoogleTTS:
         self._voice_cache[key] = voice
         return voice
 
+    def _synthesize_speech(self, *, input, voice, audio_config):
+        """Call the API, retrying transient failures with exponential backoff."""
+        delay = _RETRY_BASE_DELAY
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                return self._client.synthesize_speech(
+                    input=input, voice=voice, audio_config=audio_config
+                )
+            except Exception as exc:  # noqa: BLE001 - inspected below
+                transient = False
+                try:
+                    transient = bool(self._is_transient(exc))
+                except Exception:  # pragma: no cover - predicate is defensive
+                    transient = False
+                if not transient or attempt >= _MAX_RETRIES:
+                    raise
+                log.warning(
+                    "GoogleTTS: transient error (%s); retrying in %.1fs "
+                    "(attempt %d/%d)",
+                    exc,
+                    delay,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, _RETRY_MAX_DELAY)
+
     def synthesize(
         self, segments: list[SpeechSegment], *, out_path: str
     ) -> SynthesisResult:
         tts = self._tts
         pcm_chunks: list[bytes] = []
+        timings: list[SegmentTiming] = []
+        cursor_bytes = 0
         total_audio_bytes = 0
         spoken_segments = 0
 
@@ -149,6 +195,9 @@ class GoogleTTS:
         for i, seg in enumerate(segments):
             if not seg.text.strip():
                 log.debug("GoogleTTS: skipping empty segment %d", i)
+                # Keep timings aligned 1:1 with the input: zero-length here.
+                here = bytes_to_seconds(cursor_bytes, _SAMPLE_RATE)
+                timings.append(SegmentTiming(start=here, end=here))
                 continue
             voice = self._pick_voice(tts, seg.language_code, seg.gender)
             audio_config = tts.AudioConfig(
@@ -156,17 +205,20 @@ class GoogleTTS:
                 sample_rate_hertz=_SAMPLE_RATE,
             )
             try:
-                response = self._client.synthesize_speech(
+                response = self._synthesize_speech(
                     input=tts.SynthesisInput(text=seg.text),
                     voice=voice,
                     audio_config=audio_config,
                 )
             except Exception as exc:
                 log.error(
-                    "GoogleTTS: synthesis failed on segment %d (lang=%s, gender=%s): %s",
+                    "GoogleTTS: synthesis failed on segment %d (lang=%s, gender=%s) "
+                    "after %d retr%s: %s",
                     i,
                     seg.language_code,
                     seg.gender,
+                    _MAX_RETRIES,
+                    "y" if _MAX_RETRIES == 1 else "ies",
                     exc,
                 )
                 raise
@@ -180,9 +232,16 @@ class GoogleTTS:
                 seg.gender,
                 len(pcm),
             )
+            start = bytes_to_seconds(cursor_bytes, _SAMPLE_RATE)
             pcm_chunks.append(pcm)
+            cursor_bytes += len(pcm)
+            timings.append(
+                SegmentTiming(start=start, end=bytes_to_seconds(cursor_bytes, _SAMPLE_RATE))
+            )
             gap = seg.pause_after if seg.pause_after is not None else _TURN_GAP_SECONDS
-            pcm_chunks.append(silence_pcm(gap, _SAMPLE_RATE))
+            gap_pcm = silence_pcm(gap, _SAMPLE_RATE)
+            pcm_chunks.append(gap_pcm)
+            cursor_bytes += len(gap_pcm)
 
         if total_audio_bytes == 0:
             log.error(
@@ -200,4 +259,6 @@ class GoogleTTS:
             spoken_segments,
             total_audio_bytes,
         )
-        return SynthesisResult(path=out_path, format="wav", duration_seconds=duration)
+        return SynthesisResult(
+            path=out_path, format="wav", duration_seconds=duration, timings=timings
+        )

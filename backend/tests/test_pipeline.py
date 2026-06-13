@@ -41,6 +41,15 @@ def test_full_pipeline_with_mocks():
     assert podcast.audio_duration_seconds and podcast.audio_duration_seconds > 0
     assert len(podcast.evaluations) >= 1
 
+    # timed transcript cues are produced and aligned to the audio
+    cues = podcast.transcript
+    assert cues, "transcript cues should be produced"
+    starts = [c["start"] for c in cues]
+    assert starts == sorted(starts), "cues should be in non-decreasing start order"
+    assert all(c["end"] <= podcast.audio_duration_seconds + 0.01 for c in cues)
+    assert all(c["start"] <= c["end"] for c in cues)
+    assert {"intro", "full", "segment", "explanation"} <= {c["kind"] for c in cues}
+
     # agent steps are logged per session for step-by-step review
     steps = sorted(podcast.agent_steps, key=lambda s: s.step_index)
     assert steps, "agent steps should be logged"
@@ -205,3 +214,70 @@ def test_exercises_generated_and_graded():
         assert len(g["items"]) == 5
         assert len(g["reading_correct_index"]) == 2
         assert len(g["vocabulary_reference"]) == 2
+
+
+def test_learned_vocabulary_tracking():
+    from sqlalchemy import select
+
+    from app import vocabulary
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import Podcast, UserLearnedVocabulary
+    from app.pipeline import generate_podcast
+
+    init_db()
+
+    db = SessionLocal()
+    # A dedicated owner keeps this test isolated from vocab recorded by other
+    # tests that share the same SQLite database.
+    podcast = Podcast(
+        owner="vocab_test_user",
+        native_language="English",
+        target_language="Spanish",
+        cefr_level="A2",
+        topic_category="Science",
+        topic_description="rivers",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid, owner = podcast.id, podcast.owner
+    db.close()
+
+    generate_podcast(pid)
+
+    db = SessionLocal()
+    rows = (
+        db.execute(
+            select(UserLearnedVocabulary).where(
+                UserLearnedVocabulary.owner == owner,
+                UserLearnedVocabulary.target_language == "Spanish",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows, "key vocabulary should be recorded after generation"
+    terms = {r.term for r in rows}
+    assert "overview" in terms  # taught by the mock content adapter
+
+    # The repository (what the MCP get_learned_vocabulary tool returns) reflects it.
+    fetched = vocabulary.fetch_learned_terms(db, owner=owner, target_language="Spanish")
+    assert "overview" in {f["term"] for f in fetched}
+
+    # Recording is idempotent: existing words are skipped, only new ones added.
+    added = vocabulary.record_terms(
+        db,
+        owner=owner,
+        target_language="Spanish",
+        items=[("overview", "dup"), ("brandnewword", "fresh")],
+        podcast_id=pid,
+    )
+    assert added == 1
+
+    # And vocabulary is scoped by target language (none recorded for French).
+    fr = vocabulary.fetch_learned_terms(db, owner=owner, target_language="French")
+    assert fr == []
+    db.close()

@@ -24,9 +24,14 @@ def silence_pcm(seconds: float, sample_rate: int = SAMPLE_RATE) -> bytes:
     return b"\x00\x00" * frames
 
 
+def bytes_to_seconds(num_bytes: int, sample_rate: int = SAMPLE_RATE) -> float:
+    """Seconds of audio represented by ``num_bytes`` of mono 16-bit PCM."""
+    return num_bytes / float(SAMPLE_WIDTH * CHANNELS * sample_rate)
+
+
 def duration_of(pcm_chunks: list[bytes], sample_rate: int = SAMPLE_RATE) -> float:
     total_bytes = sum(len(c) for c in pcm_chunks)
-    return total_bytes / float(SAMPLE_WIDTH * CHANNELS * sample_rate)
+    return bytes_to_seconds(total_bytes, sample_rate)
 
 
 def write_wav(path: str, pcm_chunks: list[bytes], sample_rate: int = SAMPLE_RATE) -> None:
