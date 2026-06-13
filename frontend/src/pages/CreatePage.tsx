@@ -15,6 +15,7 @@ export default function CreatePage() {
   const [targetLanguage, setTargetLanguage] = useState("Spanish");
   const [cefrLevel, setCefrLevel] = useState("A2");
   const [durationMinutes, setDurationMinutes] = useState(10);
+  const [tone, setTone] = useState("auto");
   const [topicCategory, setTopicCategory] = useState("");
   const [topicDescription, setTopicDescription] = useState("");
 
@@ -28,6 +29,9 @@ export default function CreatePage() {
   const languages = meta?.languages ?? FALLBACK_LANGUAGES;
   const levels = meta?.cefr_levels ?? FALLBACK_LEVELS;
   const durations = meta?.durations ?? FALLBACK_DURATIONS;
+  const tones = meta?.tones ?? [
+    { value: "auto", label: "Auto", description: "Match the tone to the topic." },
+  ];
   const categories = meta?.topic_categories ?? [];
   const mockProviders = meta
     ? (["llm", "search", "tts"] as const).filter((k) => meta.providers[k] === "mock")
@@ -55,6 +59,7 @@ export default function CreatePage() {
         topic_category: topicCategory || null,
         topic_description: topicDescription.trim(),
         duration_minutes: durationMinutes,
+        tone,
       });
       navigate(`/podcasts/${created.id}`);
     } catch (err) {
@@ -146,6 +151,20 @@ export default function CreatePage() {
             ))}
           </div>
         </fieldset>
+
+        <label className="field">
+          <span className="field-label">Tone</span>
+          <select value={tone} onChange={(e) => setTone(e.target.value)}>
+            {tones.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <span className="provider-hint">
+            {tones.find((t) => t.value === tone)?.description}
+          </span>
+        </label>
 
         <label className="field">
           <span className="field-label">Topic category (optional)</span>

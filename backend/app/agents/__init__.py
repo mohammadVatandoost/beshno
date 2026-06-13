@@ -6,6 +6,7 @@ from .exercise_generator import ExerciseGeneratorAgent
 from .exercise_grader import ExerciseGraderAgent
 from .scriptwriter import ScriptwriterAgent
 from .search_filter import SearchFilterAgent, SearchFilterResult
+from .tone_selector import ToneSelectorAgent
 
 __all__ = [
     "SearchFilterAgent",
@@ -15,4 +16,5 @@ __all__ = [
     "EvaluatorAgent",
     "ExerciseGeneratorAgent",
     "ExerciseGraderAgent",
+    "ToneSelectorAgent",
 ]

@@ -15,7 +15,13 @@ from .content_models import (
     Source,
     TranscriptCue,
 )
-from .enums import CEFRLevel, DEFAULT_DURATION_MINUTES, PODCAST_DURATIONS
+from .enums import (
+    CEFRLevel,
+    DEFAULT_DURATION_MINUTES,
+    DEFAULT_TONE,
+    PODCAST_DURATIONS,
+    Tone,
+)
 
 
 # --------------------------------------------------------------------------
@@ -28,6 +34,7 @@ class PodcastCreate(BaseModel):
     topic_category: Optional[str] = Field(default=None, max_length=120)
     topic_description: str = Field(min_length=3, max_length=2000)
     duration_minutes: int = Field(default=DEFAULT_DURATION_MINUTES)
+    tone: Tone = DEFAULT_TONE
 
     @field_validator("native_language", "target_language", "topic_description")
     @classmethod
@@ -130,6 +137,8 @@ class PodcastSummary(BaseModel):
     topic_category: Optional[str] = None
     topic_description: str
     duration_minutes: int = DEFAULT_DURATION_MINUTES
+    tone: str = "auto"
+    resolved_tone: Optional[str] = None
     title: Optional[str] = None
     status: str
     current_stage: str
@@ -176,10 +185,17 @@ class ProviderInfo(BaseModel):
     tts: str
 
 
+class ToneOption(BaseModel):
+    value: str
+    label: str
+    description: str
+
+
 class MetaOut(BaseModel):
     topic_categories: list[str]
     languages: list[str]
     cefr_levels: list[str]
     durations: list[int]
+    tones: list[ToneOption]
     providers: ProviderInfo
     max_revisions: int

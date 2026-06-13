@@ -298,3 +298,48 @@ def test_learned_vocabulary_tracking():
     fr = vocabulary.fetch_learned_terms(db, owner=owner, target_language="French")
     assert fr == []
     db.close()
+
+
+def test_tone_selection():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        meta = client.get("/api/meta").json()
+        tone_values = {t["value"] for t in meta["tones"]}
+        assert {"auto", "nerdy", "professional", "friendly", "default"} <= tone_values
+        assert all({"value", "label", "description"} <= set(t) for t in meta["tones"])
+
+        # An explicit tone is used verbatim.
+        r = client.post(
+            "/api/podcasts",
+            json={
+                "native_language": "English",
+                "target_language": "Spanish",
+                "cefr_level": "A2",
+                "topic_description": "the history of bread",
+                "tone": "professional",
+            },
+        )
+        assert r.status_code == 201
+        detail = client.get(f"/api/podcasts/{r.json()['id']}").json()
+        assert detail["tone"] == "professional"
+        assert detail["resolved_tone"] == "professional"
+
+        # "Auto" resolves to a concrete tone from the topic (mock heuristic).
+        r2 = client.post(
+            "/api/podcasts",
+            json={
+                "native_language": "English",
+                "target_language": "Spanish",
+                "cefr_level": "A2",
+                "topic_category": "Technology",
+                "topic_description": "quantum computing",
+                "tone": "auto",
+            },
+        )
+        assert r2.status_code == 201
+        d2 = client.get(f"/api/podcasts/{r2.json()['id']}").json()
+        assert d2["tone"] == "auto"
+        assert d2["resolved_tone"] == "nerdy"  # tech topic -> nerdy

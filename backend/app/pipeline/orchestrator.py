@@ -23,6 +23,7 @@ from ..agents import (
     ExerciseGeneratorAgent,
     ScriptwriterAgent,
     SearchFilterAgent,
+    ToneSelectorAgent,
 )
 from ..config import Settings, get_settings
 from ..content_models import PodcastScript
@@ -32,6 +33,7 @@ from ..enums import (
     Stage,
     StageState,
     STAGE_LABELS,
+    Tone,
     is_immersion_level,
 )
 from ..languages import to_bcp47
@@ -267,6 +269,27 @@ def _close_vocab_mcp(vocab_mcp) -> None:
         pass
 
 
+def _resolve_tone(llm, podcast: Podcast) -> str:
+    """Concrete narrator tone: the explicit choice, or auto-selected from topic."""
+    requested = podcast.tone or Tone.AUTO.value
+    if requested != Tone.AUTO.value:
+        return requested
+    try:
+        choice = ToneSelectorAgent(llm).run(
+            topic=podcast.topic_description,
+            category=podcast.topic_category,
+            cefr_level=podcast.cefr_level,
+        )
+        return choice.tone.value if hasattr(choice.tone, "value") else str(choice.tone)
+    except Exception as exc:  # noqa: BLE001 - fall back to a safe default
+        log.warning(
+            "podcast=%s tone auto-selection failed (%s); using default",
+            podcast.id,
+            exc,
+        )
+        return Tone.DEFAULT.value
+
+
 # --------------------------------------------------------------------------
 # Entry point
 # --------------------------------------------------------------------------
@@ -333,6 +356,13 @@ def _run(
     topic = podcast.topic_description
     duration_minutes = podcast.duration_minutes
     step_no = 0  # monotonic index of agent steps logged for this session
+
+    # Resolve the narrator tone (explicit choice, or auto-selected from the topic),
+    # and record the concrete tone used so the UI can show it.
+    tone = _resolve_tone(llm, podcast)
+    podcast.resolved_tone = tone
+    db.commit()
+    log.info("podcast=%s tone=%s (requested=%s)", podcast.id, tone, podcast.tone)
 
     # --- Stages 1-2: agentic research + filter -----------------------------
     # Agent 1 retrieves sources by calling the topic-retrieval MCP tool itself
@@ -407,6 +437,7 @@ def _run(
                 owner=podcast.owner,
                 learned_vocab_mcp=vocab_mcp,
                 duration_minutes=duration_minutes,
+                tone=tone,
             )
             podcast.adapted_content = adapted.model_dump()
             podcast.title = adapted.title
@@ -439,6 +470,7 @@ def _run(
                 owner=podcast.owner,
                 learned_vocab_mcp=vocab_mcp,
                 duration_minutes=duration_minutes,
+                tone=tone,
             )
             podcast.script = script.model_dump()
             if not podcast.title:
@@ -466,6 +498,7 @@ def _run(
             target_language=target,
             native_language=native,
             cefr_level=cefr,
+            tone=tone,
         )
         db.add(
             Evaluation(

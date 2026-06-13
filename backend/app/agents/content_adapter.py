@@ -8,7 +8,7 @@ vocabulary, grammar and sentence complexity with the learner's CEFR level
 from __future__ import annotations
 
 from ..content_models import AdaptedContent, KeyVocab
-from ..enums import DEFAULT_DURATION_MINUTES, duration_plan
+from ..enums import DEFAULT_DURATION_MINUTES, duration_plan, tone_directive
 from .base import Agent
 
 _CEFR_GUIDANCE = {
@@ -58,6 +58,7 @@ class ContentAdapterAgent(Agent):
         owner: str = "default",
         learned_vocab_mcp=None,
         duration_minutes: int = DEFAULT_DURATION_MINUTES,
+        tone: str = "default",
     ) -> AdaptedContent:
         guidance = _CEFR_GUIDANCE.get(cefr_level, "")
         plan = duration_plan(duration_minutes)
@@ -65,6 +66,11 @@ class ContentAdapterAgent(Agent):
             f"\n\nTARGET LENGTH — the user chose a ~{duration_minutes}-minute episode. "
             f"Write the adapted text to about {plan['target_words']} words (±15%) of "
             f"target-language content so the finished audio lands near that runtime."
+        )
+        tone_block = (
+            f"\n\nTONE — write in this style: {tone_directive(tone)} Apply the tone to "
+            f"style only; it must never change the CEFR level, the facts, or the "
+            f"required structure."
         )
         feedback_block = (
             f"\n\nREVISION FEEDBACK to address:\n{feedback}\n" if feedback else ""
@@ -85,6 +91,7 @@ class ContentAdapterAgent(Agent):
             f"CEFR level: {cefr_level} — {guidance}\n\n"
             f"Source material (from selected resources):\n{materials[:16000]}"
             f"{length_block}"
+            f"{tone_block}"
             f"{feedback_block}"
             f"{avoid_block}"
         )

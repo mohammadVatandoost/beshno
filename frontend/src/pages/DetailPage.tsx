@@ -91,6 +91,12 @@ export default function DetailPage() {
             </span>
             <span className="chip">Level {p.cefr_level}</span>
             <span className="chip">⏱ ~{p.duration_minutes} min</span>
+            {p.resolved_tone && (
+              <span className="chip">
+                🎙 {p.tone === "auto" ? "Auto · " : ""}
+                {p.resolved_tone}
+              </span>
+            )}
             {["B2", "C1", "C2"].includes(p.cefr_level) && (
               <span className="chip">🎯 Immersion · target language only</span>
             )}
