@@ -13,9 +13,10 @@ from ..config import get_settings
 from ..database import get_db
 from ..enums import CEFRLevel, PodcastStatus, Stage
 from ..languages import COMMON_LANGUAGES
-from ..models import Podcast
+from ..models import AgentStep, Podcast
 from ..pipeline import generate_podcast
 from ..schemas import (
+    AgentStepOut,
     MetaOut,
     PodcastCreate,
     PodcastDetail,
@@ -109,6 +110,23 @@ def get_status(podcast_id: str, db: Session = Depends(get_db)) -> Podcast:
     if podcast is None:
         raise HTTPException(status_code=404, detail="Podcast not found")
     return podcast
+
+
+@router.get("/podcasts/{podcast_id}/steps", response_model=list[AgentStepOut])
+def get_steps(podcast_id: str, db: Session = Depends(get_db)) -> list[AgentStep]:
+    """Return the logged agent steps for a session, ordered, for review."""
+    if db.get(Podcast, podcast_id) is None:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    rows = (
+        db.execute(
+            select(AgentStep)
+            .where(AgentStep.podcast_id == podcast_id)
+            .order_by(AgentStep.step_index)
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
 
 
 @router.get("/podcasts/{podcast_id}/audio")

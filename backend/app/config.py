@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # --- Pipeline behaviour -------------------------------------------------
     # Number of evaluator-driven revision cycles before giving up / flagging.
     max_revisions: int = 2
+    # Step budget for an agent's tool-use loop (e.g. Agent 1's MCP topic
+    # retrieval): the max number of LLM turns before a final answer is forced.
+    # Use >= 2 so the agent gets at least one tool call before answering.
+    agent_max_steps: int = 3
 
     # --- Storage ------------------------------------------------------------
     storage_dir: str = "./storage"

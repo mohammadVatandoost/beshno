@@ -64,6 +64,11 @@ class Podcast(Base):
         cascade="all, delete-orphan",
         order_by="Evaluation.iteration",
     )
+    agent_steps: Mapped[list["AgentStep"]] = relationship(
+        back_populates="podcast",
+        cascade="all, delete-orphan",
+        order_by="AgentStep.step_index",
+    )
 
     @property
     def has_audio(self) -> bool:
@@ -89,3 +94,35 @@ class Evaluation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     podcast: Mapped[Podcast] = relationship(back_populates="evaluations")
+
+
+class AgentStep(Base):
+    """One step of the multi-agent pipeline, logged for step-by-step review.
+
+    Every agent invocation (and the audio step) appends a row keyed by the
+    podcast/session id, capturing the agent's name, the stage, its inputs and
+    its output, so the whole architecture can be replayed after the fact.
+    """
+
+    __tablename__ = "agent_steps"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    podcast_id: Mapped[str] = mapped_column(
+        ForeignKey("podcasts.id", ondelete="CASCADE"), index=True
+    )
+    # Monotonic order of this step within the session (0-based).
+    step_index: Mapped[int] = mapped_column(Integer, default=0)
+    # The agent that ran this step (e.g. "search_filter", "scriptwriter", "tts").
+    agent: Mapped[str] = mapped_column(String(64), index=True)
+    # The pipeline stage the step belongs to.
+    stage: Mapped[str] = mapped_column(String(30))
+    # Revision iteration (0 on the first pass; >0 for evaluator-driven redos).
+    iteration: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok | error
+    inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    podcast: Mapped[Podcast] = relationship(back_populates="agent_steps")

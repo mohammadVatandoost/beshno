@@ -254,6 +254,7 @@ transparency and tuning.
 | `GOOGLE_API_KEY`                 | —                                         | Google API key for TTS (alternative to the JSON) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | —                                         | Path to Google service-account JSON |
 | `MAX_REVISIONS`                  | `2`                                       | Evaluator revision cycles        |
+| `AGENT_MAX_STEPS`                | `3`                                       | Agent tool-use loop step budget (≥2) |
 | `STORAGE_DIR`                    | `./storage`                               | Where audio files are written    |
 | `CORS_ORIGINS`                   | `http://localhost:5173,…:3000`            | Allowed frontend origins         |
 
