@@ -25,6 +25,7 @@ class Stage(str, Enum):
     SCRIPTING = "scripting"
     EVALUATING = "evaluating"
     GENERATING_AUDIO = "generating_audio"
+    EXERCISES = "exercises"
     DONE = "done"
 
 
@@ -55,6 +56,7 @@ STAGE_ORDER: list[Stage] = [
     Stage.SCRIPTING,
     Stage.EVALUATING,
     Stage.GENERATING_AUDIO,
+    Stage.EXERCISES,
 ]
 
 # Human-readable labels matching the product spec.
@@ -66,6 +68,7 @@ STAGE_LABELS: dict[Stage, str] = {
     Stage.SCRIPTING: "Writing script",
     Stage.EVALUATING: "Reviewing quality",
     Stage.GENERATING_AUDIO: "Generating audio",
+    Stage.EXERCISES: "Creating exercises",
     Stage.DONE: "Ready",
 }
 

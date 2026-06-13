@@ -53,6 +53,7 @@ class Podcast(Base):
     selected_sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
     adapted_content: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     script: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    exercises: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # --- Audio --------------------------------------------------------------
     audio_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -69,10 +70,19 @@ class Podcast(Base):
         cascade="all, delete-orphan",
         order_by="AgentStep.step_index",
     )
+    attempts: Mapped[list["ExerciseAttempt"]] = relationship(
+        back_populates="podcast",
+        cascade="all, delete-orphan",
+        order_by="ExerciseAttempt.created_at",
+    )
 
     @property
     def has_audio(self) -> bool:
         return bool(self.audio_filename)
+
+    @property
+    def has_exercises(self) -> bool:
+        return bool(self.exercises)
 
 
 class Evaluation(Base):
@@ -126,3 +136,21 @@ class AgentStep(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     podcast: Mapped[Podcast] = relationship(back_populates="agent_steps")
+
+
+class ExerciseAttempt(Base):
+    """A learner's submission to a podcast's exercise set, with its grade."""
+
+    __tablename__ = "exercise_attempts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    podcast_id: Mapped[str] = mapped_column(
+        ForeignKey("podcasts.id", ondelete="CASCADE"), index=True
+    )
+    submission: Mapped[dict] = mapped_column(JSON)
+    score: Mapped[int] = mapped_column(Integer)
+    feedback: Mapped[str] = mapped_column(Text, default="")
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    podcast: Mapped[Podcast] = relationship(back_populates="attempts")

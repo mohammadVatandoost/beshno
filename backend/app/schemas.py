@@ -7,7 +7,13 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .content_models import AdaptedContent, EvaluationScores, PodcastScript, Source
+from .content_models import (
+    AdaptedContent,
+    EvaluationScores,
+    ExerciseItemResult,
+    PodcastScript,
+    Source,
+)
 from .enums import CEFRLevel
 
 
@@ -68,6 +74,38 @@ class AgentStepOut(BaseModel):
     created_at: datetime
 
 
+# --- Exercises (public shapes — answers withheld until grading) -----------
+class SpeakingExerciseOut(BaseModel):
+    prompt: str
+
+
+class VocabExerciseOut(BaseModel):
+    term: str
+    question: str
+
+
+class ReadingMCQExerciseOut(BaseModel):
+    question: str
+    options: list[str]
+
+
+class ExerciseSetOut(BaseModel):
+    """Exercises without answers/keys — safe to send before grading."""
+
+    speaking: SpeakingExerciseOut
+    vocabulary: list[VocabExerciseOut] = Field(default_factory=list)
+    reading: list[ReadingMCQExerciseOut] = Field(default_factory=list)
+
+
+class ExerciseGradeOut(BaseModel):
+    score: int
+    feedback: str
+    items: list[ExerciseItemResult] = Field(default_factory=list)
+    # Correct answers, revealed after submission so the learner can review.
+    reading_correct_index: list[int] = Field(default_factory=list)
+    vocabulary_reference: list[str] = Field(default_factory=list)
+
+
 class PodcastSummary(BaseModel):
     """Compact representation used in the dashboard list."""
 
@@ -111,8 +149,10 @@ class PodcastDetail(PodcastSummary):
     adapted_content: Optional[AdaptedContent] = None
     script: Optional[PodcastScript] = None
     evaluations: list[EvaluationOut] = Field(default_factory=list)
+    exercises: Optional[ExerciseSetOut] = None
     audio_format: str = "wav"
     has_audio: bool = False
+    has_exercises: bool = False
 
 
 # --------------------------------------------------------------------------

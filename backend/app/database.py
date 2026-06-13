@@ -41,7 +41,30 @@ def get_db() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create tables if they do not exist (simple bootstrap, no migrations)."""
+    """Bring the database schema up to date.
+
+    For the real (e.g. PostgreSQL) database we run Alembic migrations so schema
+    changes are versioned and applied incrementally. For SQLite — the
+    zero-dependency local/test fallback, always a throwaway fresh file — we just
+    create tables directly, which keeps tests fast and dependency-free.
+    """
     from . import models  # noqa: F401  (ensure models are registered)
 
-    Base.metadata.create_all(bind=engine)
+    if settings.database_url.startswith("sqlite"):
+        Base.metadata.create_all(bind=engine)
+        return
+
+    _run_migrations()
+
+
+def _run_migrations() -> None:
+    """Apply Alembic migrations up to head against the configured database."""
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    backend_dir = Path(__file__).resolve().parent.parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")

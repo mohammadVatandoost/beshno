@@ -80,6 +80,10 @@ Every external dependency (LLM, search, TTS) sits behind a small provider
 interface with a **mock implementation**, so the app always starts and the
 pipeline always runs even with no credentials.
 
+> 📐 For a deep dive into the six agents, the MCP-driven retrieval, the
+> self-correcting evaluator loop and the full sequence diagrams, see
+> **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ---
 
 ## Repository layout

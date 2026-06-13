@@ -107,3 +107,60 @@ class EvaluationResult(BaseModel):
         description="Which agent should revise on failure (null if passed)",
     )
     issues: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Post-podcast interactive exercises
+# --------------------------------------------------------------------------
+class SpeakingExercise(BaseModel):
+    kind: Literal["speaking"] = "speaking"
+    prompt: str = Field(description="A prompt asking the learner to speak about the topic")
+
+
+class VocabExercise(BaseModel):
+    kind: Literal["vocabulary"] = "vocabulary"
+    term: str = Field(description="A difficult word/phrase from the podcast (target language)")
+    question: str = Field(description="The question asking for the term's meaning")
+    answer: str = Field(description="The correct meaning — reference for grading (not shown)")
+
+
+class ReadingMCQExercise(BaseModel):
+    kind: Literal["reading_mcq"] = "reading_mcq"
+    question: str
+    options: list[str] = Field(description="3-4 answer options")
+    correct_index: int = Field(ge=0, description="0-based index of the correct option")
+
+
+class ExerciseSet(BaseModel):
+    """Exactly 5 exercises: 1 speaking, 2 vocabulary, 2 reading multiple-choice."""
+
+    speaking: SpeakingExercise
+    vocabulary: list[VocabExercise] = Field(default_factory=list)
+    reading: list[ReadingMCQExercise] = Field(default_factory=list)
+
+
+class ExerciseSubmission(BaseModel):
+    """The learner's submitted answers (positional, by category)."""
+
+    speaking_answer: str = ""
+    vocabulary_answers: list[str] = Field(default_factory=list)
+    reading_answers: list[int] = Field(default_factory=list)
+
+
+class ExerciseItemResult(BaseModel):
+    label: str = Field(description="Which exercise this is, e.g. 'Vocabulary 1'")
+    correct: Optional[bool] = Field(
+        default=None, description="True/False for objective items; null for open ones"
+    )
+    feedback: str
+
+
+class ExerciseGrade(BaseModel):
+    """Output of the Exercise Grader — overall score and teacher feedback."""
+
+    score: int = Field(ge=1, le=10, description="Overall score from 1 to 10")
+    feedback: str = Field(
+        description="Encouraging, constructive, detailed review in a supportive "
+        "language-teacher's voice"
+    )
+    items: list[ExerciseItemResult] = Field(default_factory=list)

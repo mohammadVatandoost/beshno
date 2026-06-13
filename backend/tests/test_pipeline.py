@@ -158,3 +158,50 @@ def test_immersion_for_advanced_levels():
     segs = _script_to_segments(script, "Spanish", "English", immersion=True)
     assert segs and all(s.language_code == "es-ES" for s in segs)
     db.close()
+
+
+def test_exercises_generated_and_graded():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/podcasts",
+            json={
+                "native_language": "English",
+                "target_language": "Spanish",
+                "cefr_level": "A2",
+                "topic_category": "Science",
+                "topic_description": "volcanoes",
+            },
+        )
+        assert resp.status_code == 201
+        pid = resp.json()["id"]
+
+        detail = client.get(f"/api/podcasts/{pid}").json()
+        assert detail["has_exercises"] is True
+        ex = detail["exercises"]
+        assert ex and "prompt" in ex["speaking"]
+        assert len(ex["vocabulary"]) == 2
+        assert len(ex["reading"]) == 2
+        # Answer keys must NOT be exposed to the client before grading.
+        assert "answer" not in ex["vocabulary"][0]
+        assert "correct_index" not in ex["reading"][0]
+        assert "options" in ex["reading"][0]
+
+        submission = {
+            "speaking_answer": "Volcanoes form when magma rises to the surface.",
+            "vocabulary_answers": [ex["vocabulary"][0]["term"], "no idea"],
+            "reading_answers": [0, 1],
+        }
+        graded = client.post(
+            f"/api/podcasts/{pid}/exercises/submit", json=submission
+        )
+        assert graded.status_code == 200
+        g = graded.json()
+        assert 1 <= g["score"] <= 10
+        assert g["feedback"]
+        assert len(g["items"]) == 5
+        assert len(g["reading_correct_index"]) == 2
+        assert len(g["vocabulary_reference"]) == 2
