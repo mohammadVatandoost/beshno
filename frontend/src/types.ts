@@ -126,6 +126,8 @@ export interface PodcastSummary {
   topic_category?: string | null;
   topic_description: string;
   duration_minutes: number;
+  tone: string;
+  resolved_tone?: string | null;
   title?: string | null;
   status: PodcastStatus;
   current_stage: string;
@@ -153,11 +155,18 @@ export interface Providers {
   tts: string;
 }
 
+export interface ToneOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
 export interface Meta {
   topic_categories: string[];
   languages: string[];
   cefr_levels: string[];
   durations: number[];
+  tones: ToneOption[];
   providers: Providers;
   max_revisions: number;
 }
@@ -169,6 +178,7 @@ export interface CreatePayload {
   topic_category?: string | null;
   topic_description: string;
   duration_minutes: number;
+  tone: string;
 }
 
 export const TERMINAL_STATUSES: PodcastStatus[] = [

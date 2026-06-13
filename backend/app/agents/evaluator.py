@@ -61,6 +61,7 @@ class EvaluatorAgent(Agent):
         target_language: str,
         native_language: str,
         cefr_level: str,
+        tone: str = "default",
     ) -> EvaluationResult:
         def render_explanation(runs) -> str:
             # Mark target-language runs with <...> so the evaluator can check that
@@ -98,6 +99,9 @@ class EvaluatorAgent(Agent):
             f"Target (learning) language: {target_language}\n"
             f"Learner's native language: {native_language}\n"
             f"Target CEFR level: {cefr_level}\n"
+            f"Narrator tone: {tone} — judge engagement/flow relative to this intended "
+            f"persona; do not penalize the script for matching the requested tone "
+            f"(factual accuracy and CEFR fit still apply).\n"
             f"{mode_note}\n\n"
             f"Adapted source content (ground truth for factual accuracy):\n"
             f"{adapted.adapted_text}\n\n"

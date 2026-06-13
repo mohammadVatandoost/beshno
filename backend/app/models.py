@@ -50,6 +50,10 @@ class Podcast(Base):
     topic_description: Mapped[str] = mapped_column(Text)
     # User-selected target runtime in minutes (drives content/script length).
     duration_minutes: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
+    # Narrator tone/persona. "auto" lets the pipeline pick from the topic;
+    # resolved_tone records the concrete tone actually used.
+    tone: Mapped[str] = mapped_column(String(20), default="auto", server_default="auto")
+    resolved_tone: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # --- Generation state ---------------------------------------------------
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)

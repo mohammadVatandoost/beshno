@@ -113,3 +113,79 @@ def normalize_duration(minutes: int | None) -> int:
 def duration_plan(minutes: int | None) -> dict[str, int]:
     """Content budget (target word count, segment count) for a runtime."""
     return _DURATION_PLANS[normalize_duration(minutes)]
+
+
+# --------------------------------------------------------------------------
+# Narrator tone / persona
+# --------------------------------------------------------------------------
+class Tone(str, Enum):
+    """User-selectable narrator/script tone. AUTO is resolved from the topic."""
+
+    AUTO = "auto"
+    DEFAULT = "default"
+    PROFESSIONAL = "professional"
+    FRIENDLY = "friendly"
+    CANDID = "candid"
+    QUIRKY = "quirky"
+    EFFICIENT = "efficient"
+    NERDY = "nerdy"
+    CYNICAL = "cynical"
+
+
+DEFAULT_TONE = Tone.AUTO
+
+# Style directive injected into the generative agents, per concrete tone. Tone
+# shapes style only — never the CEFR level, the facts, or the required format.
+TONE_GUIDANCE: dict[Tone, str] = {
+    Tone.DEFAULT: "Neutral, balanced and standard — helpful and clear with no stylistic quirks.",
+    Tone.PROFESSIONAL: "Crisp, formal and polished; precise, businesslike and authoritative.",
+    Tone.FRIENDLY: "Warm, approachable and conversational, with natural transitions and gentle encouragement.",
+    Tone.CANDID: "Direct and straightforward — state things cleanly and honestly, without hedging or sugarcoating.",
+    Tone.QUIRKY: "Playful, creative and lightly humorous, with the occasional unexpected analogy or aside (tasteful and on-topic).",
+    Tone.EFFICIENT: "Ultra-concise — drop pleasantries and preamble; use the shortest clear phrasing that still teaches.",
+    Tone.NERDY: "Analytical and highly structured; lean into technical, scientific or mathematical detail and precise terminology.",
+    Tone.CYNICAL: "Mildly skeptical, dryly sarcastic and bluntly realistic — without becoming negative, mean or unhelpful.",
+}
+
+TONE_LABELS: dict[Tone, str] = {
+    Tone.AUTO: "Auto",
+    Tone.DEFAULT: "Default",
+    Tone.PROFESSIONAL: "Professional",
+    Tone.FRIENDLY: "Friendly",
+    Tone.CANDID: "Candid",
+    Tone.QUIRKY: "Quirky",
+    Tone.EFFICIENT: "Efficient",
+    Tone.NERDY: "Nerdy",
+    Tone.CYNICAL: "Cynical",
+}
+
+TONE_DESCRIPTIONS: dict[Tone, str] = {
+    Tone.AUTO: "Match the tone to the topic automatically.",
+    Tone.DEFAULT: "Neutral, balanced, standard delivery.",
+    Tone.PROFESSIONAL: "Crisp, formal and polished.",
+    Tone.FRIENDLY: "Warm, approachable and conversational.",
+    Tone.CANDID: "Direct and straightforward, no fluff.",
+    Tone.QUIRKY: "Playful, creative and humorous.",
+    Tone.EFFICIENT: "Ultra-concise; minimal words.",
+    Tone.NERDY: "Analytical and deeply technical.",
+    Tone.CYNICAL: "Skeptical, dry and bluntly realistic.",
+}
+
+
+def tone_directive(tone: str | None) -> str:
+    """Style directive for a concrete tone (AUTO/unknown -> Default)."""
+    try:
+        t = Tone((tone or "").strip().lower())
+    except ValueError:
+        t = Tone.DEFAULT
+    if t == Tone.AUTO:
+        t = Tone.DEFAULT
+    return TONE_GUIDANCE[t]
+
+
+def tone_options() -> list[dict]:
+    """[{value, label, description}] for the frontend form (Auto first)."""
+    return [
+        {"value": t.value, "label": TONE_LABELS[t], "description": TONE_DESCRIPTIONS[t]}
+        for t in Tone
+    ]

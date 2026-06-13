@@ -23,7 +23,12 @@ from ..content_models import (
     ExplanationRun,
     PodcastScript,
 )
-from ..enums import DEFAULT_DURATION_MINUTES, duration_plan, is_immersion_level
+from ..enums import (
+    DEFAULT_DURATION_MINUTES,
+    duration_plan,
+    is_immersion_level,
+    tone_directive,
+)
 from .base import Agent
 
 SYSTEM_PROMPT_DUAL = """\
@@ -116,6 +121,7 @@ class ScriptwriterAgent(Agent):
         owner: str = "default",
         learned_vocab_mcp=None,
         duration_minutes: int = DEFAULT_DURATION_MINUTES,
+        tone: str = "default",
     ) -> PodcastScript:
         immersion = is_immersion_level(cefr_level)
         plan = duration_plan(duration_minutes)
@@ -146,12 +152,17 @@ class ScriptwriterAgent(Agent):
             f"pad or invent material to fill time, and do not drop content to save "
             f"time; chunk the adapted text into roughly that many segments."
         )
+        tone_line = (
+            f"Tone — narrate in this style: {tone_directive(tone)} Apply the tone to "
+            f"style only; keep within the CEFR level and the required format."
+        )
         user = (
             f"Target (learning) language: {target_language}\n"
             f"Learner's native language: {native_language}\n"
             f"CEFR level: {cefr_level}\n"
             f"{mode_line}\n"
-            f"{length_line}\n\n"
+            f"{length_line}\n"
+            f"{tone_line}\n\n"
             f"Title: {adapted.title}\n\n"
             f"Adapted content (in {target_language}):\n{adapted.adapted_text}\n\n"
             f"Key points:\n{points}\n\n"

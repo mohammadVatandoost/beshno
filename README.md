@@ -243,6 +243,21 @@ transparency and tuning.
 
 ---
 
+## Model benchmark
+
+The pipeline was run end-to-end against two Claude models and graded by the
+evaluator (overall quality, out of 5):
+
+| Model           | Score   |
+| --------------- | ------- |
+| Claude Sonnet   | 4.7 / 5 |
+| Claude Haiku    | 4.3 / 5 |
+
+Sonnet produces higher-quality scripts; Haiku is faster and cheaper while still
+clearing the quality gate. Set the model with `ANTHROPIC_MODEL`.
+
+---
+
 ## Configuration reference
 
 | Variable                         | Default                                   | Purpose                          |
