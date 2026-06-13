@@ -26,6 +26,9 @@ export default function CreatePage() {
   const languages = meta?.languages ?? FALLBACK_LANGUAGES;
   const levels = meta?.cefr_levels ?? FALLBACK_LEVELS;
   const categories = meta?.topic_categories ?? [];
+  const mockProviders = meta
+    ? (["llm", "search", "tts"] as const).filter((k) => meta.providers[k] === "mock")
+    : [];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +67,15 @@ export default function CreatePage() {
         your level — the learner speaks the target language, the teacher explains
         in your native language.
       </p>
+
+      {mockProviders.length > 0 && (
+        <div className="alert alert-warn">
+          ⚠️ Running in <strong>mock mode</strong> for: {mockProviders.join(", ")}.
+          {meta?.providers.tts === "mock" && " Generated audio will be silent."}
+          {meta?.providers.llm === "mock" && " Scripts will be placeholder text."}{" "}
+          Set the API keys on the backend (and restart it) to enable real providers.
+        </div>
+      )}
 
       <form className="card form" onSubmit={handleSubmit}>
         <div className="field-row">

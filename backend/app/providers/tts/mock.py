@@ -6,8 +6,12 @@ work end-to-end without any TTS credentials.
 
 from __future__ import annotations
 
+import logging
+
 from .base import SpeechSegment, SynthesisResult
 from .wavutil import duration_of, silence_pcm, write_wav
+
+log = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 24000
 _SECONDS_PER_CHAR = 0.06
@@ -27,8 +31,15 @@ class MockTTS:
             pcm_chunks.append(silence_pcm(_TURN_GAP_SECONDS, _SAMPLE_RATE))
 
         write_wav(out_path, pcm_chunks, _SAMPLE_RATE)
+        duration = duration_of(pcm_chunks, _SAMPLE_RATE)
+        log.warning(
+            "MockTTS: wrote SILENT placeholder audio %s (%.1fs, %d segments). "
+            "This file has a duration but NO sound. Set GOOGLE_API_KEY or "
+            "GOOGLE_APPLICATION_CREDENTIALS for real speech.",
+            out_path,
+            duration,
+            len(segments),
+        )
         return SynthesisResult(
-            path=out_path,
-            format="wav",
-            duration_seconds=duration_of(pcm_chunks, _SAMPLE_RATE),
+            path=out_path, format="wav", duration_seconds=duration
         )

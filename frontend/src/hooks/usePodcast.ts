@@ -3,8 +3,11 @@ import { api } from "../api/client";
 import type { PodcastDetail } from "../types";
 import { TERMINAL_STATUSES } from "../types";
 
+// How often to re-check a podcast's status while it is still generating.
+const POLL_INTERVAL_MS = 5000;
+
 /**
- * Fetch a podcast and poll it every 2s until it reaches a terminal status
+ * Fetch a podcast and poll it every 5s until it reaches a terminal status
  * (ready / needs_review / failed), then stop.
  */
 export function usePodcast(id: string | undefined) {
@@ -25,7 +28,7 @@ export function usePodcast(id: string | undefined) {
         setError(null);
         setLoading(false);
         if (!TERMINAL_STATUSES.includes(detail.status)) {
-          timer = setTimeout(tick, 2000);
+          timer = setTimeout(tick, POLL_INTERVAL_MS);
         }
       } catch (e) {
         if (!active) return;

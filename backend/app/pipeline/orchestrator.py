@@ -102,6 +102,13 @@ def generate_podcast(podcast_id: str) -> None:
     llm = get_llm(settings)
     search = get_search(settings)
     tts = get_tts(settings)
+    log.info(
+        "podcast=%s providers: llm=%s search=%s tts=%s",
+        podcast_id,
+        llm.name,
+        search.name,
+        tts.name,
+    )
 
     db = SessionLocal()
     try:
@@ -273,6 +280,12 @@ def _run(
     _start_stage(db, podcast, Stage.GENERATING_AUDIO)
     segments = _script_to_segments(script, target, native)
     out_path = storage.audio_path(podcast.id, "wav")
+    log.info(
+        "podcast=%s synthesizing %d segment(s) via %s",
+        podcast.id,
+        len(segments),
+        tts.name,
+    )
     result = tts.synthesize(segments, out_path=out_path)
     podcast.audio_filename = os.path.basename(result.path)
     podcast.audio_format = result.format

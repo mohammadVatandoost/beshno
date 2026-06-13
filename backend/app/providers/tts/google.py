@@ -40,11 +40,14 @@ class GoogleTTS:
     ) -> SynthesisResult:
         tts = self._tts
         pcm_chunks: list[bytes] = []
+        total_audio_bytes = 0
+        spoken_segments = 0
 
-        for seg in segments:
+        log.info("GoogleTTS: synthesizing %d segment(s) -> %s", len(segments), out_path)
+        for i, seg in enumerate(segments):
             if not seg.text.strip():
+                log.debug("GoogleTTS: skipping empty segment %d", i)
                 continue
-            synthesis_input = tts.SynthesisInput(text=seg.text)
             gender = (
                 tts.SsmlVoiceGender.FEMALE
                 if seg.gender == "female"
@@ -57,13 +60,48 @@ class GoogleTTS:
                 audio_encoding=tts.AudioEncoding.LINEAR16,
                 sample_rate_hertz=_SAMPLE_RATE,
             )
-            response = self._client.synthesize_speech(
-                input=synthesis_input, voice=voice, audio_config=audio_config
+            try:
+                response = self._client.synthesize_speech(
+                    input=tts.SynthesisInput(text=seg.text),
+                    voice=voice,
+                    audio_config=audio_config,
+                )
+            except Exception as exc:
+                log.error(
+                    "GoogleTTS: synthesis failed on segment %d (lang=%s, gender=%s): %s",
+                    i,
+                    seg.language_code,
+                    seg.gender,
+                    exc,
+                )
+                raise
+            pcm = pcm_from_audio(response.audio_content)
+            total_audio_bytes += len(pcm)
+            spoken_segments += 1
+            log.debug(
+                "GoogleTTS: segment %d lang=%s gender=%s -> %d audio bytes",
+                i,
+                seg.language_code,
+                seg.gender,
+                len(pcm),
             )
-            pcm_chunks.append(pcm_from_audio(response.audio_content))
+            pcm_chunks.append(pcm)
             pcm_chunks.append(silence_pcm(_TURN_GAP_SECONDS, _SAMPLE_RATE))
+
+        if total_audio_bytes == 0:
+            log.error(
+                "GoogleTTS: produced 0 bytes of speech for %d segment(s) — "
+                "the output WAV will be silent.",
+                len(segments),
+            )
 
         write_wav(out_path, pcm_chunks, _SAMPLE_RATE)
         duration = duration_of(pcm_chunks, _SAMPLE_RATE)
-        log.info("Google TTS wrote %s (%.1fs)", out_path, duration)
+        log.info(
+            "GoogleTTS: wrote %s (%.1fs, %d spoken segment(s), %d speech bytes)",
+            out_path,
+            duration,
+            spoken_segments,
+            total_audio_bytes,
+        )
         return SynthesisResult(path=out_path, format="wav", duration_seconds=duration)
