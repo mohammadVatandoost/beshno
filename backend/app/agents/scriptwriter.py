@@ -16,7 +16,12 @@ chunk followed by its breakdown (Phase 2).
 
 from __future__ import annotations
 
-from ..content_models import AdaptedContent, ContentSegment, PodcastScript
+from ..content_models import (
+    AdaptedContent,
+    ContentSegment,
+    ExplanationRun,
+    PodcastScript,
+)
 from .base import Agent
 
 SYSTEM_PROMPT = """\
@@ -35,9 +40,17 @@ it section by section with a native-language breakdown after each part. Produce:
   content in the TARGET language. Each segment has:
     - target_text: ONE short, self-contained chunk (about 1-3 sentences) in the
       TARGET language, at the learner's CEFR level.
-    - native_explanation: a breakdown of THAT chunk in the learner's NATIVE
-      language — explain key vocabulary, grammar, idioms and meaning, tied to
-      exactly what was said in target_text.
+    - native_explanation: a breakdown of THAT chunk, given as an ordered list of
+      "runs". Each run is {lang, text}. Put your native-language commentary in
+      runs with lang="native". Whenever you quote or teach a TARGET-language word
+      or phrase, put that word/phrase in its OWN run with lang="target" — never
+      inside a native run. This lets the audio pronounce target words with the
+      target-language voice instead of mispronouncing them with native phonetics.
+      Example (native=English, target=Dutch) — "The word 'lanceerde' means
+      launched" becomes:
+        [{"lang": "native", "text": "The word"},
+         {"lang": "target", "text": "lanceerde"},
+         {"lang": "native", "text": "means launched."}]
 
 Rules:
 - The concatenation of all target_text must read smoothly as one coherent text
@@ -45,8 +58,9 @@ Rules:
   facts that are not in the adapted content.
 - Keep every target_text strictly within the CEFR level.
 - Keep segments short enough that each breakdown is easy to follow.
-- Write intro and breakdown_intro and every native_explanation in the NATIVE
-  language; write every target_text in the TARGET language.
+- Write intro and breakdown_intro in the NATIVE language; write every target_text
+  in the TARGET language. In native_explanation, lang="native" runs are in the
+  NATIVE language and lang="target" runs are in the TARGET language.
 
 If revision feedback is provided, address every point in it.
 """
@@ -87,7 +101,7 @@ class ScriptwriterAgent(Agent):
             user=user,
             schema=PodcastScript,
             mock_example=mock,
-            max_tokens=12000,
+            max_tokens=32000,
         )
 
     @staticmethod
@@ -110,13 +124,20 @@ class ScriptwriterAgent(Agent):
         segments: list[ContentSegment] = []
         for i, chunk in enumerate(chunks):
             v = vocab[i % len(vocab)] if vocab else None
-            explanation = f"[in {native_language}] This part means: {chunk}."
+            runs = [
+                ExplanationRun(
+                    lang="native",
+                    text=f"[in {native_language}] This part means: {chunk}.",
+                )
+            ]
             if v:
-                explanation += f" Note the word '{v.term}' — {v.meaning}."
+                runs.append(ExplanationRun(lang="native", text="Note the word"))
+                runs.append(ExplanationRun(lang="target", text=v.term))
+                runs.append(ExplanationRun(lang="native", text=f"— {v.meaning}."))
             segments.append(
                 ContentSegment(
                     target_text=f"[in {target_language}] {chunk}.",
-                    native_explanation=explanation,
+                    native_explanation=runs,
                 )
             )
 

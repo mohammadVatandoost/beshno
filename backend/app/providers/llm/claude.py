@@ -75,51 +75,63 @@ class ClaudeLLM:
         mock_example: Optional[T] = None,
         max_tokens: int = 8000,
     ) -> T:
+        # Stream the response so a generous max_tokens (room for adaptive thinking
+        # AND the JSON) is safe: streaming avoids the SDK's non-streaming timeout
+        # guard and request timeouts on large outputs. We use output_config.format
+        # with a constraint-stripped schema and validate the JSON ourselves.
+        json_schema = _strip_unsupported(schema.model_json_schema())
+        output_config = {"format": {"type": "json_schema", "schema": json_schema}}
         try:
-            resp = self._client.messages.parse(
+            with self._client.messages.stream(
                 model=self._model,
                 max_tokens=max_tokens,
                 thinking={"type": "adaptive"},
                 system=system,
                 messages=[{"role": "user", "content": user}],
-                output_format=schema,
-            )
-            if getattr(resp, "stop_reason", None) == "refusal":
-                raise RuntimeError("Claude refused the request")
-            parsed = getattr(resp, "parsed_output", None)
-            if parsed is not None:
-                return parsed
-            text = _first_text(resp)
-            if text:
-                return schema.model_validate_json(text)
-            raise RuntimeError("Claude returned no parseable structured output")
+                output_config=output_config,
+            ) as stream:
+                resp = stream.get_final_message()
         except (AttributeError, TypeError) as exc:
             log.warning(
-                "messages.parse unavailable (%s); falling back to output_config.format",
+                "messages.stream(output_config=...) unavailable (%s); using "
+                "non-streaming create.",
                 exc,
             )
-            return self._structured_fallback(
-                system=system, user=user, schema=schema, max_tokens=max_tokens
+            resp = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                thinking={"type": "adaptive"},
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                output_config=output_config,
             )
+        return self._parse_structured(resp, schema, max_tokens)
 
-    def _structured_fallback(
-        self, *, system: str, user: str, schema: type[T], max_tokens: int
-    ) -> T:
-        json_schema = _strip_unsupported(schema.model_json_schema())
-        resp = self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            thinking={"type": "adaptive"},
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            output_config={"format": {"type": "json_schema", "schema": json_schema}},
-        )
-        if getattr(resp, "stop_reason", None) == "refusal":
+    @staticmethod
+    def _parse_structured(resp: Any, schema: type[T], max_tokens: int) -> T:
+        stop = getattr(resp, "stop_reason", None)
+        if stop == "refusal":
             raise RuntimeError("Claude refused the request")
         text = _first_text(resp)
         if not text:
-            raise RuntimeError("Claude returned no text content")
-        return schema.model_validate_json(text)
+            if stop == "max_tokens":
+                raise RuntimeError(
+                    f"Claude reached max_tokens ({max_tokens}) before emitting any "
+                    "answer — the budget was likely consumed by thinking. Increase "
+                    "max_tokens for this agent."
+                )
+            raise RuntimeError("Claude returned no parseable structured output")
+        try:
+            return schema.model_validate_json(text)
+        except Exception as exc:
+            if stop == "max_tokens":
+                raise RuntimeError(
+                    f"Claude's structured output was truncated at max_tokens "
+                    f"({max_tokens}). Increase max_tokens for this agent."
+                ) from exc
+            raise RuntimeError(
+                f"Claude returned malformed structured output: {exc}"
+            ) from exc
 
     def structured_with_tools(
         self,

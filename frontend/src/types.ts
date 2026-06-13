@@ -34,9 +34,14 @@ export interface AdaptedContent {
   key_vocabulary: KeyVocab[];
 }
 
+export interface ExplanationRun {
+  lang: "native" | "target";
+  text: string;
+}
+
 export interface ContentSegment {
   target_text: string;
-  native_explanation: string;
+  native_explanation: ExplanationRun[];
 }
 
 export interface PodcastScript {

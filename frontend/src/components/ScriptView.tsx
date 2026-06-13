@@ -18,12 +18,27 @@ export default function ScriptView({ script }: { script: PodcastScript }) {
 
       <h3 className="subsection-title">Section-by-section breakdown</h3>
       <div className="breakdown">
-        {segments.map((seg, i) => (
-          <div key={i} className="segment">
-            <p className="segment-target">{seg.target_text}</p>
-            <p className="segment-native">💬 {seg.native_explanation}</p>
-          </div>
-        ))}
+        {segments.map((seg, i) => {
+          const runs = Array.isArray(seg.native_explanation)
+            ? seg.native_explanation
+            : [];
+          return (
+            <div key={i} className="segment">
+              <p className="segment-target">{seg.target_text}</p>
+              <p className="segment-native">
+                💬{" "}
+                {runs.map((run, j) => (
+                  <span
+                    key={j}
+                    className={run.lang === "target" ? "run-target" : undefined}
+                  >
+                    {run.text}{" "}
+                  </span>
+                ))}
+              </p>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

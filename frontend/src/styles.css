@@ -556,6 +556,12 @@ audio {
   font-size: 14px;
   color: var(--muted);
 }
+/* Target-language words quoted inside a native-language breakdown. */
+.run-target {
+  color: var(--teal);
+  font-weight: 600;
+  font-style: italic;
+}
 
 /* ---------- Adapted content ---------- */
 .adapted-text {

@@ -89,5 +89,5 @@ class ContentAdapterAgent(Agent):
             user=user,
             schema=AdaptedContent,
             mock_example=mock,
-            max_tokens=12000,
+            max_tokens=32000,
         )

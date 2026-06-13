@@ -151,16 +151,22 @@ def _script_to_segments(
             SpeechSegment(script.breakdown_intro, native_code, NATIVE_VOICE, pause_after=0.7)
         )
 
-    # Phase 2 — segment, then its native-language breakdown, then a pause.
+    # Phase 2 — each chunk, then its breakdown. The breakdown is voiced run by
+    # run: target-language words use the target voice (correct pronunciation)
+    # instead of the native voice reading them with native phonetics.
     for seg in script.segments:
         if seg.target_text.strip():
             segments.append(
                 SpeechSegment(seg.target_text, target_code, TARGET_VOICE, pause_after=0.25)
             )
-        if seg.native_explanation.strip():
-            segments.append(
-                SpeechSegment(seg.native_explanation, native_code, NATIVE_VOICE, pause_after=0.8)
-            )
+        runs = [r for r in seg.native_explanation if r.text.strip()]
+        for j, run in enumerate(runs):
+            is_target = run.lang == "target"
+            code = target_code if is_target else native_code
+            voice = TARGET_VOICE if is_target else NATIVE_VOICE
+            # near-seamless between runs; a clear pause after the final run
+            gap = 0.8 if j == len(runs) - 1 else 0.06
+            segments.append(SpeechSegment(run.text, code, voice, pause_after=gap))
     return segments
 
 
