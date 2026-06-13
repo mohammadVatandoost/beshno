@@ -3,6 +3,13 @@
 Synthesizes each dialogue turn with a distinct, language-appropriate voice
 (female for the learner, male for the teacher) and stitches the LINEAR16 PCM
 segments into a single mono WAV file.
+
+Voice quality: for each (language, gender) we query the API's voice catalogue
+and pick the most natural tier available, preferring
+Chirp 3: HD -> Neural2 -> WaveNet -> Standard. This is self-maintaining — as
+Google adds Chirp 3: HD support for more languages, those voices are picked up
+automatically without code changes. Languages without a higher tier (e.g.
+Persian) gracefully fall back to whatever is available.
 """
 
 from __future__ import annotations
@@ -16,6 +23,26 @@ log = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 24000
 _TURN_GAP_SECONDS = 0.45
+
+# Voice-name substrings ranked by naturalness, best first. The first token that
+# appears (case-insensitively) in a voice name decides its tier; anything
+# unrecognised ranks below Standard.
+_TIER_RANK: list[tuple[str, int]] = [
+    ("chirp3-hd", 5),
+    ("chirp3hd", 5),
+    ("chirp-hd", 5),
+    ("neural2", 4),
+    ("wavenet", 3),
+    ("standard", 2),
+]
+
+
+def _tier_rank(voice_name: str) -> int:
+    low = voice_name.lower()
+    for token, rank in _TIER_RANK:
+        if token in low:
+            return rank
+    return 1
 
 
 class GoogleTTS:
