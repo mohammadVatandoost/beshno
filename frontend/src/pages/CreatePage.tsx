@@ -5,6 +5,7 @@ import type { Meta } from "../types";
 
 const FALLBACK_LANGUAGES = ["English", "Spanish", "French", "German", "Italian"];
 const FALLBACK_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const FALLBACK_DURATIONS = [5, 10, 20, 30];
 
 export default function CreatePage() {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ export default function CreatePage() {
   const [nativeLanguage, setNativeLanguage] = useState("English");
   const [targetLanguage, setTargetLanguage] = useState("Spanish");
   const [cefrLevel, setCefrLevel] = useState("A2");
+  const [durationMinutes, setDurationMinutes] = useState(10);
   const [topicCategory, setTopicCategory] = useState("");
   const [topicDescription, setTopicDescription] = useState("");
 
@@ -25,6 +27,7 @@ export default function CreatePage() {
 
   const languages = meta?.languages ?? FALLBACK_LANGUAGES;
   const levels = meta?.cefr_levels ?? FALLBACK_LEVELS;
+  const durations = meta?.durations ?? FALLBACK_DURATIONS;
   const categories = meta?.topic_categories ?? [];
   const mockProviders = meta
     ? (["llm", "search", "tts"] as const).filter((k) => meta.providers[k] === "mock")
@@ -51,6 +54,7 @@ export default function CreatePage() {
         cefr_level: cefrLevel,
         topic_category: topicCategory || null,
         topic_description: topicDescription.trim(),
+        duration_minutes: durationMinutes,
       });
       navigate(`/podcasts/${created.id}`);
     } catch (err) {
@@ -121,6 +125,27 @@ export default function CreatePage() {
             </select>
           </label>
         </div>
+
+        <fieldset className="field duration-field">
+          <span className="field-label">Episode length</span>
+          <div className="duration-options" role="radiogroup" aria-label="Episode length">
+            {durations.map((d) => (
+              <button
+                key={d}
+                type="button"
+                role="radio"
+                aria-checked={durationMinutes === d}
+                className={
+                  "duration-option" +
+                  (durationMinutes === d ? " duration-option-active" : "")
+                }
+                onClick={() => setDurationMinutes(d)}
+              >
+                {d} min
+              </button>
+            ))}
+          </div>
+        </fieldset>
 
         <label className="field">
           <span className="field-label">Topic category (optional)</span>

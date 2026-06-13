@@ -229,6 +229,37 @@ a:hover {
   font-weight: 600;
   color: var(--muted);
 }
+/* Episode-length segmented control */
+.duration-field {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.duration-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.duration-option {
+  font: inherit;
+  cursor: pointer;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.duration-option:hover {
+  border-color: var(--primary);
+}
+.duration-option-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
 select,
 textarea,
 input[type="text"] {

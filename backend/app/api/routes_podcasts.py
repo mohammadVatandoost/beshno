@@ -13,7 +13,7 @@ from ..agents import ExerciseGraderAgent
 from ..config import get_settings
 from ..content_models import ExerciseSet, ExerciseSubmission
 from ..database import get_db
-from ..enums import CEFRLevel, PodcastStatus, Stage
+from ..enums import CEFRLevel, PODCAST_DURATIONS, PodcastStatus, Stage
 from ..languages import COMMON_LANGUAGES
 from ..models import AgentStep, ExerciseAttempt, Podcast
 from ..pipeline import generate_podcast
@@ -60,6 +60,7 @@ def meta() -> MetaOut:
         topic_categories=TOPIC_CATEGORIES,
         languages=COMMON_LANGUAGES,
         cefr_levels=[lvl.value for lvl in CEFRLevel],
+        durations=PODCAST_DURATIONS,
         providers=ProviderInfo(
             llm=s.resolved_llm_provider(),
             search=s.resolved_search_provider(),
@@ -81,6 +82,7 @@ def create_podcast(
         cefr_level=payload.cefr_level.value,
         topic_category=payload.topic_category,
         topic_description=payload.topic_description,
+        duration_minutes=payload.duration_minutes,
         status=PodcastStatus.PENDING.value,
         current_stage=Stage.QUEUED.value,
         stage_history=[],

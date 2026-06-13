@@ -331,6 +331,7 @@ def _run(
     native = podcast.native_language
     cefr = podcast.cefr_level
     topic = podcast.topic_description
+    duration_minutes = podcast.duration_minutes
     step_no = 0  # monotonic index of agent steps logged for this session
 
     # --- Stages 1-2: agentic research + filter -----------------------------
@@ -405,6 +406,7 @@ def _run(
                 feedback=feedback_for_content,
                 owner=podcast.owner,
                 learned_vocab_mcp=vocab_mcp,
+                duration_minutes=duration_minutes,
             )
             podcast.adapted_content = adapted.model_dump()
             podcast.title = adapted.title
@@ -436,6 +438,7 @@ def _run(
                 feedback=feedback_for_script,
                 owner=podcast.owner,
                 learned_vocab_mcp=vocab_mcp,
+                duration_minutes=duration_minutes,
             )
             podcast.script = script.model_dump()
             if not podcast.title:

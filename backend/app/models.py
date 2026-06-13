@@ -48,6 +48,8 @@ class Podcast(Base):
     cefr_level: Mapped[str] = mapped_column(String(2))
     topic_category: Mapped[str | None] = mapped_column(String(120), nullable=True)
     topic_description: Mapped[str] = mapped_column(Text)
+    # User-selected target runtime in minutes (drives content/script length).
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
 
     # --- Generation state ---------------------------------------------------
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
