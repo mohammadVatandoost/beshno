@@ -29,14 +29,26 @@ latency and a cost estimate).
 ## Features
 
 - **Customisation** — predefined topic categories or a free-text topic; native
-  language, target language and CEFR level (A1–C2).
+  language, target language, CEFR level (A1–C2), target runtime (5/10/20/30 min)
+  and a **narrator tone** (auto, friendly, professional, nerdy, …).
+- **Two-phase episodes** — a full target-language playback followed by a
+  chunk-by-chunk breakdown; **full immersion** at B2+.
+- **Synced transcript** — timed cues highlight and scroll the transcript with the
+  audio (karaoke-style) and let you seek by clicking text.
+- **Interactive practice** — every episode ships with 5 auto-generated exercises
+  (speaking, vocabulary, reading MCQ), graded by an agent with a 1–10 score and
+  per-item feedback.
+- **Spaced-repetition memory** — Beshno tracks the words you've already learned
+  per language and avoids re-introducing them in later episodes.
 - **Live generation status** — stage-level progress (Researching → Selecting
-  sources → Adapting → Writing script → Reviewing → Generating audio).
+  sources → Adapting → Writing script → Reviewing → Generating audio · Creating
+  exercises).
 - **Audio player** — play, pause, seek and download the generated episode.
 - **Dashboard** — history of every podcast with languages, level, topic, timestamp
   and status (Ready / Needs review / Failed).
-- **Transparency** — the transcript, adapted summary, key vocabulary, selected
-  sources and the evaluator's quality scores are all shown.
+- **Transparency & analytics** — the transcript, adapted summary, key vocabulary,
+  selected sources, the evaluator's quality scores, a per-step agent trace and a
+  token/latency/cost breakdown are all shown.
 
 ---
 
@@ -46,31 +58,38 @@ latency and a cost estimate).
                               ┌──────────────────────────────┐
    React + Vite (frontend) ── │  FastAPI (backend)            │
                               │                               │
-   POST /api/podcasts ───────▶│  create record, run pipeline  │
-   GET  /api/podcasts/:id ───▶│  in a background thread       │
+   POST /api/podcasts ───────▶│  create record, 201 instantly │
+   GET  /api/podcasts/:id ───▶│  job → worker pool (threads)  │
                               └──────────────┬────────────────┘
                                              ▼
-          [Search/Retrieval]  ─ Tavily (or mock), topic in target language
+          Tone Selector        picks a narrator persona (when tone=auto)
                   │
                   ▼
-          Agent 1 · Search Filter      selects top 5 relevant, reliable sources
+          Agent 1 · Search Filter      researches via MCP tool, picks top 5 sources
+                  │                     ◀──▶ MCP Topic-Retrieval (Tavily / mock)
+                  ▼
+          Agent 2 · Content Adapter    rewrites to CEFR level + runtime budget
+                  │                     ◀──▶ MCP Learned-Vocab (spaced repetition)
+                  ▼
+          Agent 3 · Scriptwriter       two-phase, two-voice episode
                   │
                   ▼
-          Agent 2 · Content Adapter    rewrites to the CEFR level (≤ ~5 pages)
-                  │
-                  ▼
-          Agent 3 · Scriptwriter       two-person dialogue (learner + teacher)
-                  │
-                  ▼
-          Agent 4 · Evaluator          quality gate: CEFR fit, balance, teaching
-                  │                     quality, factual accuracy, engagement
+          Agent 4 · Evaluator          quality gate: CEFR fit, pedagogy,
+                  │                     factual accuracy, engagement
        fail ◀─────┤  (route feedback back to Agent 2 or 3, bounded retries)
                   │ pass
                   ▼
-          [Text-to-Speech]  ─ Google Cloud TTS (or mock); distinct voices
-                  │
-                  ▼
+            ┌─────┴───────────────────────┐   (run in parallel)
+            ▼                             ▼
+   [Text-to-Speech]               Agent 5 · Exercise Generator
+   Google TTS (or mock);          5 practice exercises (non-fatal)
+   distinct voices + timed cues
+            │                             │
+            └─────────────┬───────────────┘
+                          ▼
           PostgreSQL + local file storage ──▶ Ready for playback
+
+   Later · learner submits answers ─▶ Agent 6 · Exercise Grader (1–10 + feedback)
 ```
 
 **Stack**
@@ -79,9 +98,10 @@ latency and a cost estimate).
 | --------- | ----------------------------------------------------------------- |
 | Frontend  | React 18, Vite, TypeScript, React Router                          |
 | Backend   | FastAPI, SQLAlchemy 2, Pydantic v2                                |
-| LLM       | Claude (Anthropic SDK), `claude-opus-4-8`, structured outputs     |
-| Search    | Tavily                                                            |
-| TTS       | Google Cloud Text-to-Speech (LINEAR16 → stitched WAV)             |
+| LLM       | Claude (Anthropic SDK), `claude-opus-4-8`, structured outputs + model-aware extended thinking |
+| Retrieval | MCP topic-retrieval server over Tavily (or mock)                 |
+| Memory    | MCP learned-vocabulary server (spaced repetition) over PostgreSQL |
+| TTS       | Google Cloud Text-to-Speech (LINEAR16 → stitched WAV) + timed transcript cues |
 | Database  | PostgreSQL (SQLite supported for local dev)                       |
 | Storage   | Local filesystem (`.wav`)                                         |
 
@@ -89,9 +109,9 @@ Every external dependency (LLM, search, TTS) sits behind a small provider
 interface with a **mock implementation**, so the app always starts and the
 pipeline always runs even with no credentials.
 
-> 📐 For a deep dive into the six agents, the MCP-driven retrieval, the
-> self-correcting evaluator loop and the full sequence diagrams, see
-> **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+> 📐 For a deep dive into the six agents + tone selector, the two MCP servers, the
+> self-correcting evaluator loop, the parallel finalize step and the full sequence
+> diagrams, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -110,17 +130,26 @@ beshno/
 │       ├── enums.py           # status / stage / CEFR enums
 │       ├── languages.py       # language list + BCP-47 mapping for TTS
 │       ├── storage.py         # local audio storage
-│       ├── agents/            # one file per agent
-│       │   ├── search_filter.py     # Agent 1
-│       │   ├── content_adapter.py   # Agent 2
-│       │   ├── scriptwriter.py      # Agent 3
-│       │   └── evaluator.py         # Agent 4
+│       ├── telemetry.py       # per-run token / latency / cost recorder
+│       ├── agents/            # one file per agent (base.py = shared base)
+│       │   ├── base.py                # shared Agent base (LLM + vocab helper)
+│       │   ├── tone_selector.py       # aux · picks narrator persona (tone=auto)
+│       │   ├── search_filter.py       # Agent 1
+│       │   ├── content_adapter.py     # Agent 2
+│       │   ├── scriptwriter.py        # Agent 3
+│       │   ├── evaluator.py           # Agent 4
+│       │   ├── exercise_generator.py  # Agent 5
+│       │   └── exercise_grader.py     # Agent 6 (on submit)
+│       ├── mcp/               # Model Context Protocol servers + client facades
+│       │   ├── topic_server.py / client.py        # agentic web retrieval
+│       │   └── vocab_server.py / vocab_client.py   # spaced-repetition memory
 │       ├── providers/         # pluggable LLM / search / TTS (+ mocks)
 │       │   ├── llm/  (claude.py, mock.py)
 │       │   ├── search/ (tavily.py, mock.py)
 │       │   └── tts/  (google.py, mock.py, wavutil.py)
 │       ├── pipeline/
-│       │   └── orchestrator.py      # runs all stages, retries, status updates
+│       │   ├── runner.py              # worker pool: dispatch generation off-thread
+│       │   └── orchestrator.py        # stages, retries, parallel finalize, status
 │       └── api/
 │           └── routes_podcasts.py
 │   └── tests/                 # end-to-end pipeline + API tests (mock providers)
@@ -206,17 +235,20 @@ The active providers are logged on startup and returned by `GET /api/meta`.
 
 ## API reference
 
-| Method   | Path                          | Description                              |
-| -------- | ----------------------------- | ---------------------------------------- |
-| `GET`    | `/api/meta`                   | Form options + active providers          |
-| `POST`   | `/api/podcasts`               | Create a podcast and start generation    |
-| `GET`    | `/api/podcasts`               | List all podcasts (newest first)         |
-| `GET`    | `/api/podcasts/{id}`          | Full podcast detail (script, sources, …) |
-| `GET`    | `/api/podcasts/{id}/status`   | Lightweight status for polling           |
-| `GET`    | `/api/podcasts/{id}/audio`    | Stream/download the generated `.wav`     |
-| `DELETE` | `/api/podcasts/{id}`          | Delete a podcast and its audio           |
+| Method   | Path                                    | Description                              |
+| -------- | --------------------------------------- | ---------------------------------------- |
+| `GET`    | `/api/meta`                             | Form options (tones, durations, …) + active providers |
+| `POST`   | `/api/podcasts`                         | Create a podcast and start generation    |
+| `GET`    | `/api/podcasts`                         | List all podcasts (newest first)         |
+| `GET`    | `/api/podcasts/{id}`                    | Full podcast detail (script, sources, exercises, analytics) |
+| `GET`    | `/api/podcasts/{id}/status`             | Lightweight status for polling           |
+| `GET`    | `/api/podcasts/{id}/steps`              | Per-agent trace (inputs, output, duration, tokens) |
+| `POST`   | `/api/podcasts/{id}/exercises/submit`   | Submit answers → graded score + feedback |
+| `GET`    | `/api/podcasts/{id}/audio`              | Stream/download the generated `.wav`     |
+| `DELETE` | `/api/podcasts/{id}`                    | Delete a podcast and its audio           |
 
-Create payload:
+Create payload (`duration_minutes` ∈ {5, 10, 20, 30}; `tone` ∈ {auto, default,
+professional, friendly, candid, quirky, efficient, nerdy, cynical}):
 
 ```json
 {
@@ -224,7 +256,9 @@ Create payload:
   "target_language": "Spanish",
   "cefr_level": "A2",
   "topic_category": "Science",
-  "topic_description": "How volcanoes form"
+  "topic_description": "How volcanoes form",
+  "duration_minutes": 10,
+  "tone": "auto"
 }
 ```
 
@@ -234,21 +268,37 @@ Interactive docs at `/docs`.
 
 ## How generation works
 
-1. **Retrieval** — the search provider fetches articles for the topic.
-2. **Agent 1 · Search Filter** — selects the 5 most relevant, reliable sources.
-3. **Agent 2 · Content Adapter** — rewrites the material into the target language,
-   strictly at the chosen CEFR level (≤ ~5 pages), plus key points and vocabulary.
-4. **Agent 3 · Scriptwriter** — turns it into a natural two-voice dialogue.
-5. **Agent 4 · Evaluator** — scores CEFR compliance, language balance, pedagogical
-   quality, factual accuracy and engagement. On a pass it proceeds; on a fail it
-   routes structured feedback back to Agent 2 or Agent 3.
-6. **Bounded retries** — after `MAX_REVISIONS` (default 2) cycles the best version
-   is kept and flagged **Needs review** rather than looping forever.
-7. **TTS** — the approved script is synthesised with a distinct voice per speaker
-   and stored; the record is marked **Ready**.
+A `POST /api/podcasts` returns `201` instantly with a tracking id; the job is
+dispatched to a worker pool (`PIPELINE_WORKERS` threads) and runs off the request
+thread while the frontend polls stage-level progress.
 
-Every evaluator verdict (scores, feedback, issues) is persisted to PostgreSQL for
-transparency and tuning.
+0. **Tone Selector** — when `tone=auto`, picks a narrator persona from the topic;
+   the resolved tone then steers Agents 2 and 3.
+1. **Agent 1 · Search Filter** — given the `search_topic` MCP tool, researches the
+   topic agentically (possibly several refined queries) and selects the 5 best
+   sources.
+2. **Agent 2 · Content Adapter** — rewrites the material into the target language
+   at the chosen CEFR level and runtime budget, plus key points and vocabulary. It
+   queries the learned-vocab MCP to avoid words you already know.
+3. **Agent 3 · Scriptwriter** — turns it into a two-phase, two-voice episode
+   (full playback + chunk-by-chunk breakdown).
+4. **Agent 4 · Evaluator** — scores CEFR compliance, pedagogical quality, factual
+   accuracy and engagement (0–5 each). It passes only when its own verdict **and**
+   the score thresholds agree; on a fail it routes structured feedback back to
+   Agent 2 or Agent 3.
+5. **Bounded retries** — after `MAX_REVISIONS` (default 2) cycles the best version
+   is kept and flagged **Needs review** rather than looping forever.
+6. **Parallel finalize** — once the script passes, TTS (distinct voice per speaker
+   + timed transcript cues) and **Agent 5 · Exercise Generator** run concurrently.
+   Audio is required; exercises are a bonus (a failure is logged, the podcast still
+   ships). The record is marked **Ready** and the new vocabulary is recorded for
+   spaced repetition.
+7. **Practice (on demand)** — when the learner submits answers,
+   **Agent 6 · Exercise Grader** returns a 1–10 score with per-item feedback.
+
+Every step is persisted: evaluator verdicts (scores, feedback, target), a
+per-agent trace (`AgentStep`: inputs, output, duration, token usage) and per-run
+telemetry (total tokens, LLM calls, wall-clock time and a cost estimate).
 
 ---
 
@@ -259,6 +309,7 @@ transparency and tuning.
 | `DATABASE_URL`                   | `postgresql+psycopg://…@localhost:5433/…` | Database connection              |
 | `ANTHROPIC_API_KEY`              | —                                         | Claude key (empty → mock LLM)    |
 | `ANTHROPIC_MODEL`                | `claude-opus-4-8`                         | Claude model id                  |
+| `ANTHROPIC_THINKING`             | `adaptive`                                | Extended-thinking mode: `adaptive` \| `off` \| `enabled[:budget]` |
 | `LLM_PROVIDER`                   | `auto`                                    | `auto` \| `claude` \| `mock`     |
 | `SEARCH_PROVIDER`                | `auto`                                    | `auto` \| `tavily` \| `mock`     |
 | `TAVILY_API_KEY`                 | —                                         | Tavily key                       |
@@ -268,6 +319,7 @@ transparency and tuning.
 | `GOOGLE_APPLICATION_CREDENTIALS` | —                                         | Path to Google service-account JSON |
 | `MAX_REVISIONS`                  | `2`                                       | Evaluator revision cycles        |
 | `AGENT_MAX_STEPS`                | `3`                                       | Agent tool-use loop step budget (≥2) |
+| `PIPELINE_WORKERS`               | `4`                                       | Generation worker threads (`0` = inline/synchronous) |
 | `STORAGE_DIR`                    | `./storage`                               | Where audio files are written    |
 | `CORS_ORIGINS`                   | `http://localhost:5173,…:3000`            | Allowed frontend origins         |
 
@@ -296,11 +348,13 @@ npm run build
 
 ## Notes & production considerations
 
-- **Background work** uses FastAPI `BackgroundTasks` (a threadpool) — simple and
-  in-process. For horizontal scaling or durability across restarts, move the
-  pipeline to a task queue (Celery / RQ / Arq).
-- **Schema bootstrap** uses `create_all` on startup. Add Alembic migrations before
-  evolving the schema in production.
+- **Background work** uses an in-process worker pool (`ThreadPoolExecutor`,
+  `PIPELINE_WORKERS`) drained on shutdown — simple and in-process. For horizontal
+  scaling or durability across restarts, move the pipeline to a task queue
+  (Celery / RQ / Arq).
+- **Schema** is managed by **Alembic**: on startup the real (PostgreSQL) database
+  is migrated to head, while SQLite dev runs fall back to `create_all`. New columns
+  ship as versioned migrations under `backend/alembic/versions/`.
 - **Auth** is not implemented; records use a single implicit `owner`. The column is
   in place so per-user auth can be layered on later.
 - **Audio** is stored locally as WAV. Swap `storage.py` for object storage (S3/GCS)
