@@ -24,15 +24,15 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://beshno:beshno@db:5432/beshno
       # Leave the keys empty to run on mock providers.
-      ANTHROPIC_API_KEY: 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
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: claude-haiku-4-5-20251001 # claude-sonnet-4-6 
       LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       SEARCH_PROVIDER: ${SEARCH_PROVIDER:-auto}
-      TAVILY_API_KEY: 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
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       TTS_PROVIDER: ${TTS_PROVIDER:-auto}
       # Google TTS auth — an API key, OR a service-account JSON path
       # (GOOGLE_APPLICATION_CREDENTIALS; mount the file via the volume below).
-      GOOGLE_API_KEY: AIzaSyDvInlmV7yrdWD3wvImV_JxcoEGE4pGWSk
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
       MAX_REVISIONS: ${MAX_REVISIONS:-2}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"

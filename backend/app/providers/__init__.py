@@ -30,7 +30,9 @@ def get_llm(settings: Settings | None = None) -> LLMProvider:
 
                 log.info("LLM provider: Claude (model=%s)", settings.anthropic_model)
                 return ClaudeLLM(
-                    api_key=settings.anthropic_api_key, model=settings.anthropic_model
+                    api_key=settings.anthropic_api_key,
+                    model=settings.anthropic_model,
+                    thinking=settings.anthropic_thinking,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning(

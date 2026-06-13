@@ -476,3 +476,118 @@ def test_audio_and_exercises_run_in_parallel(monkeypatch):
     completed = {e["stage"] for e in podcast.stage_history if e["state"] == "completed"}
     assert {"generating_audio", "exercises"} <= completed
     db.close()
+
+
+def test_generation_telemetry_recorded():
+    """Token usage + timing are captured per-step and aggregated on the podcast."""
+    from sqlalchemy import select
+
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import AgentStep, Podcast
+    from app.pipeline import submit_generation
+
+    init_db()
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="Spanish",
+        cefr_level="A2",
+        topic_description="telemetry test",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    submit_generation(pid)  # eager -> runs inline
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    # Aggregates recorded (the mock LLM reports estimated token usage).
+    assert podcast.total_input_tokens > 0
+    assert podcast.total_output_tokens > 0
+    assert podcast.llm_calls > 0
+    assert podcast.total_tokens == (
+        podcast.total_input_tokens + podcast.total_output_tokens
+    )
+    assert podcast.generation_ms is not None and podcast.generation_ms >= 0
+
+    steps = (
+        db.execute(select(AgentStep).where(AgentStep.podcast_id == pid))
+        .scalars()
+        .all()
+    )
+    by_agent = {s.agent: s for s in steps}
+    # An LLM step has token usage attributed to it...
+    assert by_agent["scriptwriter"].input_tokens > 0
+    assert by_agent["scriptwriter"].output_tokens > 0
+    # ...while the TTS audio step (no LLM call) records none.
+    tts_steps = [s for s in steps if s.stage == Stage.GENERATING_AUDIO.value]
+    assert tts_steps and all((s.input_tokens or 0) == 0 for s in tts_steps)
+    # Per-step token sums never exceed the run aggregate.
+    assert sum(s.input_tokens or 0 for s in steps) <= podcast.total_input_tokens
+    total_tokens = podcast.total_tokens
+    db.close()
+
+    # The detail API exposes the computed total + cost estimate.
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/podcasts/{pid}").json()
+    assert detail["total_tokens"] == total_tokens
+    assert detail["cost_estimate_usd"] >= 0
+    assert detail["generation_ms"] is not None
+
+
+def test_claude_thinking_mode_resolution():
+    """ANTHROPIC_THINKING controls the thinking kwarg sent to the model."""
+    from app.providers.llm.claude import ClaudeLLM
+
+    off = ClaudeLLM(api_key="k", model="m", thinking="off")
+    assert off._thinking_kwargs(8000) == {}
+
+    adaptive = ClaudeLLM(api_key="k", model="m", thinking="adaptive")
+    assert adaptive._thinking_kwargs(8000) == {"thinking": {"type": "adaptive"}}
+
+    enabled = ClaudeLLM(api_key="k", model="m", thinking="enabled:3000")
+    assert enabled._thinking_kwargs(8000) == {
+        "thinking": {"type": "enabled", "budget_tokens": 3000}
+    }
+    # When max_tokens leaves no room for the answer, thinking is skipped.
+    assert enabled._thinking_kwargs(1500) == {}
+
+
+def test_claude_disables_thinking_when_model_rejects_it():
+    """A model that rejects the thinking param triggers a no-thinking retry."""
+    import httpx
+    from anthropic import BadRequestError
+
+    from app.providers.llm.claude import ClaudeLLM
+
+    llm = ClaudeLLM(api_key="k", model="claude-haiku-4-5", thinking="adaptive")
+    calls: list[dict] = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        if "thinking" in kwargs:
+            req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise BadRequestError(
+                "adaptive thinking is not supported on this model",
+                response=httpx.Response(400, request=req),
+                body=None,
+            )
+        return object()
+
+    llm._client.messages.create = fake_create  # type: ignore[assignment]
+    resp = llm._create(model="m", max_tokens=4000, system="s", messages=[])
+
+    assert resp is not None
+    assert llm._thinking_mode == "off"  # disabled after the rejection
+    assert len(calls) == 2  # first attempt with thinking, retry without it
+    assert "thinking" in calls[0] and "thinking" not in calls[1]

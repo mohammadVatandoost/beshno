@@ -30,22 +30,20 @@ generation and score it 0-5 on each dimension:
 
 1. cefr_compliance — Do the target-language segments stay within the target
    CEFR level's vocabulary and grammar range (not too easy, not too hard)?
-2. language_balance — Is the split between target-language content and
-   native-language breakdowns appropriate and pedagogically useful (chunks short
-   enough; explanations neither too sparse nor overwhelming)?
-3. pedagogical_quality — Are the native-language breakdowns accurate, relevant
+2. pedagogical_quality — Are the native-language breakdowns accurate, relevant
    and clearly tied to the chunk they explain (vocabulary, grammar, idioms)?
-4. factual_accuracy — Do the segments faithfully reflect the adapted source
+3. factual_accuracy — Do the segments faithfully reflect the adapted source
    content, with no hallucinated facts?
-5. engagement_flow — Is the segmentation natural and well-paced, and does the
-   concatenation of all segments read as one coherent text?
+4. engagement_flow — Is the segmentation natural and well-paced (chunks an
+   appropriate length), and does the concatenation of all segments read as one
+   coherent text?
 
 Then decide:
 - passed = true only if the script is genuinely ready for audio.
 - If not passed, set revision_target to "content_adapter" when the problem is in
   the underlying content (factual errors, wrong level of the source material) or
-  "scriptwriter" when the problem is in the segmentation/breakdowns (balance,
-  flow, explanations, CEFR drift, chunks too long or too short).
+  "scriptwriter" when the problem is in the segmentation/breakdowns (flow,
+  explanations, CEFR drift, chunks too long or too short).
 - Provide concrete, actionable feedback and a list of specific issues.
 """
 
@@ -85,7 +83,7 @@ class EvaluatorAgent(Agent):
             mode_note = (
                 "MODE: FULL IMMERSION (advanced level). The episode MUST be 100% in "
                 "the target language — intro, cues and every breakdown included — "
-                "with NO native language anywhere. For language_balance, heavily "
+                "with NO native language anywhere. For pedagogical_quality, heavily "
                 "penalize ANY native-language usage; breakdowns should be deeper "
                 "conceptual explanations in the target language."
             )
@@ -113,7 +111,6 @@ class EvaluatorAgent(Agent):
             passed=True,
             scores=EvaluationScores(
                 cefr_compliance=4.2,
-                language_balance=4.0,
                 pedagogical_quality=4.1,
                 factual_accuracy=4.3,
                 engagement_flow=4.0,
@@ -140,7 +137,6 @@ class EvaluatorAgent(Agent):
             v >= PASS_THRESHOLD_PER_DIMENSION
             for v in (
                 dims.cefr_compliance,
-                dims.language_balance,
                 dims.pedagogical_quality,
                 dims.factual_accuracy,
                 dims.engagement_flow,

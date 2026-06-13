@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # --- LLM (Anthropic / Claude) ------------------------------------------
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-4-8"
+    # Extended-thinking mode for Claude calls: "adaptive" (Opus 4.7+/Fable),
+    # "off" (models without thinking, e.g. Haiku 4.5), or "enabled[:budget]".
+    # Auto-falls back to "off" if the configured model rejects the mode.
+    anthropic_thinking: str = "adaptive"
     # auto | claude | mock
     llm_provider: str = "auto"
 

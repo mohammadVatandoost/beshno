@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from .content_models import (
     AdaptedContent,
@@ -15,6 +15,8 @@ from .content_models import (
     Source,
     TranscriptCue,
 )
+from .config import get_settings
+from .telemetry import estimate_cost, pricing_label
 from .enums import (
     CEFRLevel,
     DEFAULT_DURATION_MINUTES,
@@ -88,6 +90,8 @@ class AgentStepOut(BaseModel):
     output: Optional[dict] = None
     detail: Optional[str] = None
     duration_ms: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
     created_at: datetime
 
 
@@ -174,6 +178,32 @@ class PodcastDetail(PodcastSummary):
     audio_format: str = "wav"
     has_audio: bool = False
     has_exercises: bool = False
+
+    # --- Generation telemetry ----------------------------------------------
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    llm_calls: int = 0
+    generation_ms: Optional[int] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_tokens(self) -> int:
+        return self.total_input_tokens + self.total_output_tokens
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cost_estimate_usd(self) -> float:
+        return estimate_cost(
+            self.total_input_tokens,
+            self.total_output_tokens,
+            get_settings().anthropic_model,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cost_pricing_label(self) -> str:
+        """Model whose list price backs ``cost_estimate_usd`` (e.g. "Haiku 4.5")."""
+        return pricing_label(get_settings().anthropic_model)
 
 
 # --------------------------------------------------------------------------

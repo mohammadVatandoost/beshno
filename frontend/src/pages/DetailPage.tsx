@@ -8,11 +8,10 @@ import SyncedTranscript from "../components/SyncedTranscript";
 import StatusBadge from "../components/StatusBadge";
 import { usePodcast } from "../hooks/usePodcast";
 import type { Evaluation } from "../types";
-import { formatDate } from "../util";
+import { formatDate, formatMillis, formatTokens, formatUsd } from "../util";
 
 const SCORE_LABELS: Record<string, string> = {
   cefr_compliance: "CEFR fit",
-  language_balance: "Language balance",
   pedagogical_quality: "Teaching quality",
   factual_accuracy: "Factual accuracy",
   engagement_flow: "Engagement & flow",
@@ -269,6 +268,48 @@ export default function DetailPage() {
               {p.evaluations.length} evaluation rounds were run.
             </p>
           )}
+        </section>
+      )}
+
+      {/* Generation analytics */}
+      {finished && (p.generation_ms != null || p.total_tokens > 0) && (
+        <section className="card">
+          <h2 className="section-title">Generation analytics</h2>
+          <div className="telemetry-grid">
+            <div className="telemetry-stat">
+              <span className="telemetry-value">
+                {formatTokens(p.total_tokens)}
+              </span>
+              <span className="telemetry-label">Total tokens</span>
+              <span className="telemetry-sub">
+                {formatTokens(p.total_input_tokens)} in ·{" "}
+                {formatTokens(p.total_output_tokens)} out
+              </span>
+            </div>
+            <div className="telemetry-stat">
+              <span className="telemetry-value">
+                {formatUsd(p.cost_estimate_usd)}
+              </span>
+              <span className="telemetry-label">Est. API cost</span>
+              <span className="telemetry-sub">
+                {p.cost_pricing_label} list pricing
+              </span>
+            </div>
+            <div className="telemetry-stat">
+              <span className="telemetry-value">
+                {formatMillis(p.generation_ms)}
+              </span>
+              <span className="telemetry-label">Generation time</span>
+              <span className="telemetry-sub">
+                {p.llm_calls} LLM call{p.llm_calls === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+          <p className="muted small">
+            Token counts are reported by the model; cost is an estimate at current
+            {" "}
+            {p.cost_pricing_label} list pricing.
+          </p>
         </section>
       )}
     </div>

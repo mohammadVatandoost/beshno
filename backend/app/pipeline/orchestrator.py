@@ -40,6 +40,7 @@ from ..enums import (
 from ..languages import to_bcp47
 from ..models import AgentStep, Evaluation, Podcast
 from ..providers import get_llm, get_search, get_tts
+from ..telemetry import TelemetryRecorder
 from ..providers.tts.base import SpeechSegment
 from ..storage import Storage
 from ..vocabulary import record_terms
@@ -91,6 +92,8 @@ def _log_step(
     status: str = "ok",
     detail: str | None = None,
     duration_ms: int | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> None:
     """Persist one agent step for later step-by-step review of the run."""
     db.add(
@@ -105,6 +108,8 @@ def _log_step(
             output=output,
             detail=detail,
             duration_ms=duration_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
     )
     db.commit()
@@ -301,6 +306,10 @@ def generate_podcast(podcast_id: str) -> None:
     storage.ensure()
 
     llm = get_llm(settings)
+    # Per-run telemetry recorder, attached to this run's (fresh) LLM instance so
+    # concurrent generations never share token counters.
+    recorder = TelemetryRecorder()
+    llm._recorder = recorder
     # The MCP topic-retrieval server resolves the search provider in its own
     # process; we resolve it here too purely to log which backend will be used.
     search = get_search(settings)
@@ -324,7 +333,7 @@ def generate_podcast(podcast_id: str) -> None:
         # by Agent 2 and Agent 3 to avoid repeating previously-taught words.
         vocab_mcp = _open_vocab_mcp(podcast.owner)
         try:
-            _run(db, podcast, settings, storage, llm, tts, vocab_mcp)
+            _run(db, podcast, settings, storage, llm, tts, vocab_mcp, recorder)
         except Exception as exc:  # noqa: BLE001 - record any failure on the record
             log.exception("Pipeline failed for podcast %s", podcast_id)
             podcast.status = PodcastStatus.FAILED.value
@@ -350,6 +359,7 @@ def _run(
     llm,
     tts,
     vocab_mcp=None,
+    recorder: TelemetryRecorder | None = None,
 ) -> None:
     target = podcast.target_language
     native = podcast.native_language
@@ -357,6 +367,16 @@ def _run(
     topic = podcast.topic_description
     duration_minutes = podcast.duration_minutes
     step_no = 0  # monotonic index of agent steps logged for this session
+    recorder = recorder or TelemetryRecorder()
+    run_t0 = time.perf_counter()  # wall clock for total generation time
+
+    def _step_tokens(before) -> dict:
+        """LLM token usage attributable to a step since ``before`` was taken."""
+        now = recorder.snapshot()
+        return {
+            "input_tokens": now.input_tokens - before.input_tokens,
+            "output_tokens": now.output_tokens - before.output_tokens,
+        }
 
     # Resolve the narrator tone (explicit choice, or auto-selected from the topic),
     # and record the concrete tone used so the UI can show it.
@@ -372,6 +392,7 @@ def _run(
     # as distinct stages for the frontend's stage view.
     _start_stage(db, podcast, Stage.RESEARCHING)
     t0 = time.perf_counter()
+    tok0 = recorder.snapshot()
     outcome = SearchFilterAgent(llm).run(
         topic=topic,
         target_language=target,
@@ -407,6 +428,7 @@ def _run(
         },
         detail=f"{outcome.retrieved_count} retrieved, {len(selected)} selected",
         duration_ms=int((time.perf_counter() - t0) * 1000),
+        **_step_tokens(tok0),
     )
     step_no += 1
 
@@ -427,6 +449,7 @@ def _run(
         if adapted is None or feedback_for_content is not None:
             _start_stage(db, podcast, Stage.ADAPTING)
             t0 = time.perf_counter()
+            tok0 = recorder.snapshot()
             used_feedback = feedback_for_content
             adapted = content_adapter.run(
                 topic=topic,
@@ -453,6 +476,7 @@ def _run(
                 inputs={"feedback": used_feedback, "materials_chars": len(materials)},
                 output=adapted.model_dump(),
                 duration_ms=int((time.perf_counter() - t0) * 1000),
+                **_step_tokens(tok0),
             )
             step_no += 1
             feedback_for_content = None
@@ -461,6 +485,7 @@ def _run(
         if script is None or feedback_for_script is not None:
             _start_stage(db, podcast, Stage.SCRIPTING)
             t0 = time.perf_counter()
+            tok0 = recorder.snapshot()
             used_feedback = feedback_for_script
             script = scriptwriter.run(
                 adapted=adapted,
@@ -487,12 +512,14 @@ def _run(
                 inputs={"feedback": used_feedback},
                 output=script.model_dump(),
                 duration_ms=int((time.perf_counter() - t0) * 1000),
+                **_step_tokens(tok0),
             )
             step_no += 1
             feedback_for_script = None
 
         _start_stage(db, podcast, Stage.EVALUATING)
         t0 = time.perf_counter()
+        tok0 = recorder.snapshot()
         evaluation = evaluator.run(
             script=script,
             adapted=adapted,
@@ -533,6 +560,7 @@ def _run(
             detail=f"{'passed' if passed else 'needs revision'} "
             f"(overall {evaluation.overall_score:.1f}/5)",
             duration_ms=int((time.perf_counter() - t0) * 1000),
+            **_step_tokens(tok0),
         )
         step_no += 1
 
@@ -588,6 +616,7 @@ def _run(
 
     def _exercise_task():
         t0 = time.perf_counter()
+        tok0 = recorder.snapshot()
         ex = ExerciseGeneratorAgent(llm).run(
             topic=topic,
             target_language=target,
@@ -595,7 +624,8 @@ def _run(
             cefr_level=cefr,
             adapted=adapted,
         )
-        return ex, int((time.perf_counter() - t0) * 1000)
+        # Snapshot on this worker thread, around this run's own LLM call.
+        return ex, int((time.perf_counter() - t0) * 1000), _step_tokens(tok0)
 
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="beshno-finalize") as pool:
         audio_future = pool.submit(_audio_task)
@@ -609,10 +639,11 @@ def _run(
 
         # Exercises are a bonus: a failure must never fail the podcast.
         try:
-            exercises, exercise_ms = exercise_future.result()
+            exercises, exercise_ms, exercise_tokens = exercise_future.result()
             exercise_error: str | None = None
         except Exception as exc:  # noqa: BLE001
-            exercises, exercise_ms, exercise_error = None, 0, str(exc)
+            exercises, exercise_ms, exercise_tokens = None, 0, {}
+            exercise_error = str(exc)
 
     # --- Persist audio (Stage 6) -------------------------------------------
     podcast.audio_filename = os.path.basename(result.path)
@@ -658,6 +689,7 @@ def _run(
             stage=Stage.EXERCISES,
             output=exercises.model_dump(),
             duration_ms=exercise_ms,
+            **exercise_tokens,
         )
         step_no += 1
         log.info(
@@ -697,6 +729,21 @@ def _run(
         log.warning(
             "podcast=%s failed to record learned vocabulary: %s", podcast.id, exc
         )
+
+    # --- Telemetry: persist aggregate token usage + total generation time ---
+    totals = recorder.snapshot()
+    podcast.total_input_tokens = totals.input_tokens
+    podcast.total_output_tokens = totals.output_tokens
+    podcast.llm_calls = totals.calls
+    podcast.generation_ms = int((time.perf_counter() - run_t0) * 1000)
+    log.info(
+        "podcast=%s telemetry: %d in + %d out tokens over %d call(s), %dms",
+        podcast.id,
+        totals.input_tokens,
+        totals.output_tokens,
+        totals.calls,
+        podcast.generation_ms,
+    )
 
     # --- Done --------------------------------------------------------------
     podcast.current_stage = Stage.DONE.value
