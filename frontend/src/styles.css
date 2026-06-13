@@ -663,6 +663,119 @@ audio {
   margin: 16px 0 0;
 }
 
+/* ---------- Exercises ---------- */
+.exercises {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.exercise {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+}
+.exercise-tag {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  margin-bottom: 6px;
+}
+.exercise-q {
+  margin: 0 0 10px;
+}
+.exercise-reveal {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--teal);
+}
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.option:hover {
+  background: #fff;
+}
+.option-correct {
+  background: var(--teal-soft);
+  border-color: #cde9e4;
+}
+.option-wrong {
+  background: #fbeeec;
+  border-color: #e7c6c2;
+}
+.grade {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--primary-soft);
+}
+.grade-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.grade-score {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1;
+}
+.grade-score span {
+  font-size: 16px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.grade-feedback {
+  margin: 12px 0;
+}
+.grade-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.grade-item {
+  display: flex;
+  gap: 10px;
+  font-size: 14px;
+}
+.grade-mark {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  margin-top: 1px;
+}
+.grade-mark.ok {
+  background: var(--teal);
+}
+.grade-mark.bad {
+  background: var(--danger);
+}
+.grade-mark.neutral {
+  background: var(--muted);
+}
+
 @media (max-width: 640px) {
   .vocab-list {
     grid-template-columns: 1fr;

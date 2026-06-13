@@ -1,5 +1,7 @@
 import type {
   CreatePayload,
+  ExerciseGrade,
+  ExerciseSubmission,
   Meta,
   PodcastDetail,
   PodcastStatus,
@@ -50,4 +52,9 @@ export const api = {
   remove: (id: string) =>
     request<void>(`/podcasts/${id}`, { method: "DELETE" }),
   audioUrl: (id: string) => `${BASE}/podcasts/${id}/audio`,
+  submitExercises: (id: string, submission: ExerciseSubmission) =>
+    request<ExerciseGrade>(`/podcasts/${id}/exercises/submit`, {
+      method: "POST",
+      body: JSON.stringify(submission),
+    }),
 };

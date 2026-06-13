@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import AudioPlayer from "../components/AudioPlayer";
+import ExercisesPanel from "../components/ExercisesPanel";
 import GenerationStatus from "../components/GenerationStatus";
 import ScriptView from "../components/ScriptView";
 import StatusBadge from "../components/StatusBadge";
@@ -152,6 +153,17 @@ export default function DetailPage() {
         <section className="card">
           <h2 className="section-title">Transcript</h2>
           <ScriptView script={p.script} />
+        </section>
+      )}
+
+      {/* Interactive exercises */}
+      {finished && p.exercises && id && (
+        <section className="card">
+          <h2 className="section-title">Practice exercises</h2>
+          <p className="muted small">
+            Answer all five, then submit for a score out of 10 and teacher feedback.
+          </p>
+          <ExercisesPanel podcastId={id} exercises={p.exercises} />
         </section>
       )}
 

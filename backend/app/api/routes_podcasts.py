@@ -9,14 +9,18 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..agents import ExerciseGraderAgent
 from ..config import get_settings
+from ..content_models import ExerciseSet, ExerciseSubmission
 from ..database import get_db
 from ..enums import CEFRLevel, PodcastStatus, Stage
 from ..languages import COMMON_LANGUAGES
-from ..models import AgentStep, Podcast
+from ..models import AgentStep, ExerciseAttempt, Podcast
 from ..pipeline import generate_podcast
+from ..providers import get_llm
 from ..schemas import (
     AgentStepOut,
+    ExerciseGradeOut,
     MetaOut,
     PodcastCreate,
     PodcastDetail,
@@ -127,6 +131,56 @@ def get_steps(podcast_id: str, db: Session = Depends(get_db)) -> list[AgentStep]
         .all()
     )
     return list(rows)
+
+
+@router.post("/podcasts/{podcast_id}/exercises/submit", response_model=ExerciseGradeOut)
+def submit_exercises(
+    podcast_id: str,
+    submission: ExerciseSubmission,
+    db: Session = Depends(get_db),
+) -> ExerciseGradeOut:
+    """Grade a learner's exercise answers: a 1-10 score and teacher feedback."""
+    podcast = db.get(Podcast, podcast_id)
+    if podcast is None:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    if not podcast.exercises:
+        raise HTTPException(status_code=404, detail="No exercises for this podcast")
+
+    ex_set = ExerciseSet.model_validate(podcast.exercises)
+    reading_correct = [r.correct_index for r in ex_set.reading]
+    mcq_correct = [
+        (submission.reading_answers[i] if i < len(submission.reading_answers) else -1)
+        == r.correct_index
+        for i, r in enumerate(ex_set.reading)
+    ]
+
+    grade = ExerciseGraderAgent(get_llm()).run(
+        exercise_set=ex_set,
+        submission=submission,
+        target_language=podcast.target_language,
+        native_language=podcast.native_language,
+        cefr_level=podcast.cefr_level,
+        mcq_correct=mcq_correct,
+    )
+
+    db.add(
+        ExerciseAttempt(
+            podcast_id=podcast.id,
+            submission=submission.model_dump(),
+            score=grade.score,
+            feedback=grade.feedback,
+            items=[it.model_dump() for it in grade.items],
+        )
+    )
+    db.commit()
+
+    return ExerciseGradeOut(
+        score=grade.score,
+        feedback=grade.feedback,
+        items=grade.items,
+        reading_correct_index=reading_correct,
+        vocabulary_reference=[v.answer for v in ex_set.vocabulary],
+    )
 
 
 @router.get("/podcasts/{podcast_id}/audio")

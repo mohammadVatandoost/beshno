@@ -70,6 +70,32 @@ export interface Evaluation {
   created_at: string;
 }
 
+export interface ExerciseSet {
+  speaking: { prompt: string };
+  vocabulary: { term: string; question: string }[];
+  reading: { question: string; options: string[] }[];
+}
+
+export interface ExerciseSubmission {
+  speaking_answer: string;
+  vocabulary_answers: string[];
+  reading_answers: number[];
+}
+
+export interface ExerciseItemResult {
+  label: string;
+  correct?: boolean | null;
+  feedback: string;
+}
+
+export interface ExerciseGrade {
+  score: number;
+  feedback: string;
+  items: ExerciseItemResult[];
+  reading_correct_index: number[];
+  vocabulary_reference: string[];
+}
+
 export interface PodcastSummary {
   id: string;
   created_at: string;
@@ -93,8 +119,10 @@ export interface PodcastDetail extends PodcastSummary {
   adapted_content?: AdaptedContent | null;
   script?: PodcastScript | null;
   evaluations: Evaluation[];
+  exercises?: ExerciseSet | null;
   audio_format: string;
   has_audio: boolean;
+  has_exercises: boolean;
 }
 
 export interface Providers {
@@ -133,4 +161,5 @@ export const PIPELINE_STAGES: { key: string; label: string }[] = [
   { key: "scripting", label: "Writing script" },
   { key: "evaluating", label: "Reviewing quality" },
   { key: "generating_audio", label: "Generating audio" },
+  { key: "exercises", label: "Creating exercises" },
 ];

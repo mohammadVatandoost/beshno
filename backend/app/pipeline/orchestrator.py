@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from ..agents import (
     ContentAdapterAgent,
     EvaluatorAgent,
+    ExerciseGeneratorAgent,
     ScriptwriterAgent,
     SearchFilterAgent,
 )
@@ -465,6 +466,37 @@ def _run(
         duration_ms=int((time.perf_counter() - t0) * 1000),
     )
     step_no += 1
+
+    # --- Stage 7: interactive exercises (non-fatal) ------------------------
+    # A bonus practice session; if it fails the podcast is still delivered.
+    try:
+        _start_stage(db, podcast, Stage.EXERCISES)
+        t0 = time.perf_counter()
+        exercises = ExerciseGeneratorAgent(llm).run(
+            topic=topic,
+            target_language=target,
+            native_language=native,
+            cefr_level=cefr,
+            adapted=adapted,
+        )
+        podcast.exercises = exercises.model_dump()
+        _complete_stage(db, podcast, Stage.EXERCISES, "5 exercises created")
+        _log_step(
+            db,
+            podcast,
+            index=step_no,
+            agent=ExerciseGeneratorAgent.name,
+            stage=Stage.EXERCISES,
+            output=exercises.model_dump(),
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+        step_no += 1
+    except Exception as exc:  # noqa: BLE001 - exercises must never fail the podcast
+        log.warning(
+            "podcast=%s exercise generation failed (non-fatal): %s", podcast.id, exc
+        )
+        _append_event(podcast, Stage.EXERCISES, StageState.FAILED, str(exc)[:200])
+        db.commit()
 
     # --- Done --------------------------------------------------------------
     podcast.current_stage = Stage.DONE.value
