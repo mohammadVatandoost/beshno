@@ -36,6 +36,16 @@ class AdaptedContent(BaseModel):
     key_vocabulary: list[KeyVocab] = Field(default_factory=list)
 
 
+class ExplanationRun(BaseModel):
+    """A run of the breakdown in a single language, so each is voiced correctly."""
+
+    lang: Literal["native", "target"] = Field(
+        description="'native' for commentary in the learner's native language; "
+        "'target' for a word or phrase quoted in the target (learning) language"
+    )
+    text: str
+
+
 class ContentSegment(BaseModel):
     """One short chunk of the content paired with its native-language breakdown."""
 
@@ -43,9 +53,13 @@ class ContentSegment(BaseModel):
         description="A short, self-contained chunk of the content in the target "
         "(learning) language, at the learner's CEFR level"
     )
-    native_explanation: str = Field(
-        description="A breakdown of that chunk in the learner's NATIVE language — "
-        "key vocabulary, grammar, idioms and meaning, tied to what was just said"
+    native_explanation: list[ExplanationRun] = Field(
+        default_factory=list,
+        description="The breakdown as an ordered list of language-tagged runs. Keep "
+        "native-language commentary in lang='native' runs and put every "
+        "target-language word/phrase in its OWN lang='target' run, so the audio "
+        "pronounces each part with the correct voice (rather than the native voice "
+        "reading foreign words with native phonetics)",
     )
 
 

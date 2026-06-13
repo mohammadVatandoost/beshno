@@ -61,8 +61,16 @@ class EvaluatorAgent(Agent):
         native_language: str,
         cefr_level: str,
     ) -> EvaluationResult:
+        def render_explanation(runs) -> str:
+            # Mark target-language runs with <...> so the evaluator can check that
+            # foreign words are isolated for correct pronunciation.
+            return " ".join(
+                (f"<{r.text}>" if r.lang == "target" else r.text) for r in runs
+            )
+
         rendered_segments = "\n\n".join(
-            f"[{i}] TARGET: {seg.target_text}\n    NATIVE: {seg.native_explanation}"
+            f"[{i}] TARGET: {seg.target_text}\n"
+            f"    NATIVE: {render_explanation(seg.native_explanation)}"
             for i, seg in enumerate(script.segments)
         )
         rendered = (
@@ -100,7 +108,7 @@ class EvaluatorAgent(Agent):
             user=user,
             schema=EvaluationResult,
             mock_example=mock,
-            max_tokens=5000,
+            max_tokens=12000,
         )
 
     @staticmethod
