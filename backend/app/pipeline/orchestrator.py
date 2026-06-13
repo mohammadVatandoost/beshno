@@ -1,0 +1,294 @@
+"""Runs the full multi-agent podcast generation pipeline.
+
+    [search] -> Agent 1 filter -> Agent 2 adapt -> Agent 3 script
+            -> Agent 4 evaluate (loop back to 2/3 on failure) -> TTS -> store
+
+Designed to run in a background thread with its own DB session. All progress,
+agent artefacts and evaluator verdicts are persisted as the pipeline advances so
+the frontend can poll stage-level status.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
+
+from ..agents import (
+    ContentAdapterAgent,
+    EvaluatorAgent,
+    ScriptwriterAgent,
+    SearchFilterAgent,
+)
+from ..config import Settings, get_settings
+from ..content_models import PodcastScript
+from ..database import SessionLocal
+from ..enums import PodcastStatus, Stage, StageState, STAGE_LABELS
+from ..languages import to_bcp47
+from ..models import Evaluation, Podcast
+from ..providers import get_llm, get_search, get_tts
+from ..providers.tts.base import SpeechSegment
+from ..storage import Storage
+
+log = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------
+# Stage-history / status helpers (JSON column reassigned to flag the change)
+# --------------------------------------------------------------------------
+def _append_event(
+    podcast: Podcast, stage: Stage, state: StageState, detail: str | None = None
+) -> None:
+    event = {
+        "stage": stage.value,
+        "label": STAGE_LABELS[stage],
+        "state": state.value,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "detail": detail,
+    }
+    podcast.stage_history = (podcast.stage_history or []) + [event]
+
+
+def _start_stage(db: Session, podcast: Podcast, stage: Stage) -> None:
+    podcast.status = PodcastStatus.IN_PROGRESS.value
+    podcast.current_stage = stage.value
+    _append_event(podcast, stage, StageState.STARTED)
+    db.commit()
+    log.info("podcast=%s stage=%s started", podcast.id, stage.value)
+
+
+def _complete_stage(
+    db: Session, podcast: Podcast, stage: Stage, detail: str | None = None
+) -> None:
+    _append_event(podcast, stage, StageState.COMPLETED, detail)
+    db.commit()
+
+
+def _format_feedback(feedback: str, issues: list[str]) -> str:
+    if not issues:
+        return feedback
+    bullets = "\n".join(f"- {i}" for i in issues)
+    return f"{feedback}\n\nSpecific issues:\n{bullets}"
+
+
+def _script_to_segments(
+    script: PodcastScript, target_language: str, native_language: str
+) -> list[SpeechSegment]:
+    target_code = to_bcp47(target_language)
+    native_code = to_bcp47(native_language)
+    segments: list[SpeechSegment] = []
+    for turn in script.turns:
+        # Gender follows the speaker (learner=female "girl", teacher=male "boy");
+        # the locale follows the language the line is spoken in.
+        gender = "female" if turn.speaker == "learner" else "male"
+        code = target_code if turn.language == "target" else native_code
+        segments.append(
+            SpeechSegment(text=turn.text, language_code=code, gender=gender)
+        )
+    return segments
+
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+def generate_podcast(podcast_id: str) -> None:
+    """Run the pipeline for a podcast. Safe to call from a background thread."""
+    settings = get_settings()
+    storage = Storage()
+    storage.ensure()
+
+    llm = get_llm(settings)
+    search = get_search(settings)
+    tts = get_tts(settings)
+
+    db = SessionLocal()
+    try:
+        podcast = db.get(Podcast, podcast_id)
+        if podcast is None:
+            log.error("generate_podcast: podcast %s not found", podcast_id)
+            return
+        try:
+            _run(db, podcast, settings, storage, llm, search, tts)
+        except Exception as exc:  # noqa: BLE001 - record any failure on the record
+            log.exception("Pipeline failed for podcast %s", podcast_id)
+            podcast.status = PodcastStatus.FAILED.value
+            podcast.error_message = str(exc)[:1000]
+            try:
+                _append_event(
+                    podcast, Stage(podcast.current_stage), StageState.FAILED, str(exc)[:300]
+                )
+            except Exception:  # pragma: no cover - current_stage always valid
+                pass
+            db.commit()
+    finally:
+        db.close()
+
+
+def _run(
+    db: Session,
+    podcast: Podcast,
+    settings: Settings,
+    storage: Storage,
+    llm,
+    search,
+    tts,
+) -> None:
+    target = podcast.target_language
+    native = podcast.native_language
+    cefr = podcast.cefr_level
+    topic = podcast.topic_description
+
+    # --- Stage 1: research / retrieval -------------------------------------
+    _start_stage(db, podcast, Stage.RESEARCHING)
+    raw = search.search(topic, language=target, max_results=settings.search_max_results)
+    if not raw:
+        raise RuntimeError("No search results found for the topic.")
+    _complete_stage(
+        db, podcast, Stage.RESEARCHING, f"{len(raw)} results via {search.name}"
+    )
+
+    # --- Stage 2: Agent 1 filter -------------------------------------------
+    _start_stage(db, podcast, Stage.FILTERING)
+    filtered = SearchFilterAgent(llm).run(
+        topic=topic,
+        target_language=target,
+        native_language=native,
+        cefr_level=cefr,
+        results=raw,
+    )
+    selected = filtered.selected[:5]
+    podcast.selected_sources = [s.model_dump() for s in selected]
+    _complete_stage(
+        db, podcast, Stage.FILTERING, f"{len(selected)} sources selected"
+    )
+
+    # Build the source material for the adapter from the selected sources.
+    by_url = {r.url: r for r in raw}
+    parts = []
+    for s in selected:
+        raw_match = by_url.get(s.url)
+        body = raw_match.content if raw_match else ""
+        parts.append(f"# {s.title}\nURL: {s.url}\n{body}")
+    materials = "\n\n".join(parts) or "\n\n".join(r.content for r in raw[:5])
+
+    content_adapter = ContentAdapterAgent(llm)
+    scriptwriter = ScriptwriterAgent(llm)
+    evaluator = EvaluatorAgent(llm)
+
+    adapted = None
+    script = None
+    feedback_for_content: str | None = None
+    feedback_for_script: str | None = None
+    needs_review = False
+    attempt = 0
+    max_revisions = settings.max_revisions
+
+    # --- Stages 3-5: adapt -> script -> evaluate (with bounded revisions) ---
+    while True:
+        if adapted is None or feedback_for_content is not None:
+            _start_stage(db, podcast, Stage.ADAPTING)
+            adapted = content_adapter.run(
+                topic=topic,
+                target_language=target,
+                native_language=native,
+                cefr_level=cefr,
+                materials=materials,
+                feedback=feedback_for_content,
+            )
+            podcast.adapted_content = adapted.model_dump()
+            podcast.title = adapted.title
+            _complete_stage(db, podcast, Stage.ADAPTING)
+            feedback_for_content = None
+            script = None  # content changed -> the script must be rewritten
+
+        if script is None or feedback_for_script is not None:
+            _start_stage(db, podcast, Stage.SCRIPTING)
+            script = scriptwriter.run(
+                adapted=adapted,
+                target_language=target,
+                native_language=native,
+                cefr_level=cefr,
+                feedback=feedback_for_script,
+            )
+            podcast.script = script.model_dump()
+            if not podcast.title:
+                podcast.title = script.title
+            _complete_stage(db, podcast, Stage.SCRIPTING)
+            feedback_for_script = None
+
+        _start_stage(db, podcast, Stage.EVALUATING)
+        evaluation = evaluator.run(
+            script=script,
+            adapted=adapted,
+            target_language=target,
+            native_language=native,
+            cefr_level=cefr,
+        )
+        db.add(
+            Evaluation(
+                podcast_id=podcast.id,
+                iteration=attempt,
+                passed=evaluation.passed,
+                scores=evaluation.scores.model_dump(),
+                overall_score=evaluation.overall_score,
+                feedback=evaluation.feedback,
+                revision_target=evaluation.revision_target,
+                issues=evaluation.issues,
+            )
+        )
+        passed = EvaluatorAgent.passes(evaluation)
+        podcast.revision_count = attempt
+        _complete_stage(
+            db,
+            podcast,
+            Stage.EVALUATING,
+            f"{'passed' if passed else 'needs revision'} "
+            f"(overall {evaluation.overall_score:.1f}/5)",
+        )
+
+        if passed:
+            break
+        if attempt >= max_revisions:
+            needs_review = True
+            log.info(
+                "podcast=%s revision limit (%d) reached; flagging needs_review",
+                podcast.id,
+                max_revisions,
+            )
+            break
+
+        # Route the evaluator's feedback to the right agent for another pass.
+        attempt += 1
+        podcast.revision_count = attempt
+        feedback = _format_feedback(evaluation.feedback, evaluation.issues)
+        if evaluation.revision_target == "content_adapter":
+            feedback_for_content = feedback
+        else:
+            feedback_for_script = feedback
+        db.commit()
+
+    # --- Stage 6: audio generation -----------------------------------------
+    _start_stage(db, podcast, Stage.GENERATING_AUDIO)
+    segments = _script_to_segments(script, target, native)
+    out_path = storage.audio_path(podcast.id, "wav")
+    result = tts.synthesize(segments, out_path=out_path)
+    podcast.audio_filename = os.path.basename(result.path)
+    podcast.audio_format = result.format
+    podcast.audio_duration_seconds = result.duration_seconds
+    _complete_stage(
+        db,
+        podcast,
+        Stage.GENERATING_AUDIO,
+        f"{result.duration_seconds:.0f}s via {tts.name}",
+    )
+
+    # --- Done --------------------------------------------------------------
+    podcast.current_stage = Stage.DONE.value
+    podcast.status = (
+        PodcastStatus.NEEDS_REVIEW.value if needs_review else PodcastStatus.READY.value
+    )
+    _append_event(podcast, Stage.DONE, StageState.COMPLETED)
+    db.commit()
+    log.info("podcast=%s finished status=%s", podcast.id, podcast.status)
