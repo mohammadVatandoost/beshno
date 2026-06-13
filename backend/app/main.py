@@ -25,12 +25,25 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     init_db()
     log = logging.getLogger("beshno")
+    providers = {
+        "llm": settings.resolved_llm_provider(),
+        "search": settings.resolved_search_provider(),
+        "tts": settings.resolved_tts_provider(),
+    }
     log.info(
         "Beshno started. providers: llm=%s search=%s tts=%s",
-        settings.resolved_llm_provider(),
-        settings.resolved_search_provider(),
-        settings.resolved_tts_provider(),
+        providers["llm"],
+        providers["search"],
+        providers["tts"],
     )
+    mocks = [name for name, value in providers.items() if value == "mock"]
+    if mocks:
+        log.warning(
+            "MOCK providers active for: %s. Output is placeholder "
+            "(mock LLM = templated scripts, mock TTS = SILENT audio). "
+            "Set ANTHROPIC_API_KEY / TAVILY_API_KEY / GOOGLE_API_KEY to enable real providers.",
+            ", ".join(mocks),
+        )
     yield
 
 

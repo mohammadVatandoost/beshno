@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -27,7 +28,7 @@ from ..content_models import PodcastScript
 from ..database import SessionLocal
 from ..enums import PodcastStatus, Stage, StageState, STAGE_LABELS
 from ..languages import to_bcp47
-from ..models import Evaluation, Podcast
+from ..models import AgentStep, Evaluation, Podcast
 from ..providers import get_llm, get_search, get_tts
 from ..providers.tts.base import SpeechSegment
 from ..storage import Storage
@@ -66,6 +67,46 @@ def _complete_stage(
     db.commit()
 
 
+def _log_step(
+    db: Session,
+    podcast: Podcast,
+    *,
+    index: int,
+    agent: str,
+    stage: Stage,
+    output: dict | None = None,
+    inputs: dict | None = None,
+    iteration: int = 0,
+    status: str = "ok",
+    detail: str | None = None,
+    duration_ms: int | None = None,
+) -> None:
+    """Persist one agent step for later step-by-step review of the run."""
+    db.add(
+        AgentStep(
+            podcast_id=podcast.id,
+            step_index=index,
+            agent=agent,
+            stage=stage.value,
+            iteration=iteration,
+            status=status,
+            inputs=inputs,
+            output=output,
+            detail=detail,
+            duration_ms=duration_ms,
+        )
+    )
+    db.commit()
+    log.info(
+        "podcast=%s step=%d agent=%s stage=%s status=%s",
+        podcast.id,
+        index,
+        agent,
+        stage.value,
+        status,
+    )
+
+
 def _format_feedback(feedback: str, issues: list[str]) -> str:
     if not issues:
         return feedback
@@ -100,8 +141,17 @@ def generate_podcast(podcast_id: str) -> None:
     storage.ensure()
 
     llm = get_llm(settings)
+    # The MCP topic-retrieval server resolves the search provider in its own
+    # process; we resolve it here too purely to log which backend will be used.
     search = get_search(settings)
     tts = get_tts(settings)
+    log.info(
+        "podcast=%s providers: llm=%s search=%s (via MCP) tts=%s",
+        podcast_id,
+        llm.name,
+        search.name,
+        tts.name,
+    )
 
     db = SessionLocal()
     try:
@@ -110,7 +160,7 @@ def generate_podcast(podcast_id: str) -> None:
             log.error("generate_podcast: podcast %s not found", podcast_id)
             return
         try:
-            _run(db, podcast, settings, storage, llm, search, tts)
+            _run(db, podcast, settings, storage, llm, tts)
         except Exception as exc:  # noqa: BLE001 - record any failure on the record
             log.exception("Pipeline failed for podcast %s", podcast_id)
             podcast.status = PodcastStatus.FAILED.value
@@ -132,46 +182,58 @@ def _run(
     settings: Settings,
     storage: Storage,
     llm,
-    search,
     tts,
 ) -> None:
     target = podcast.target_language
     native = podcast.native_language
     cefr = podcast.cefr_level
     topic = podcast.topic_description
+    step_no = 0  # monotonic index of agent steps logged for this session
 
-    # --- Stage 1: research / retrieval -------------------------------------
+    # --- Stages 1-2: agentic research + filter -----------------------------
+    # Agent 1 retrieves sources by calling the topic-retrieval MCP tool itself
+    # (possibly several times with refined queries) and selects the best ones.
+    # Retrieval and filtering happen inside one agentic loop; we surface both
+    # as distinct stages for the frontend's stage view.
     _start_stage(db, podcast, Stage.RESEARCHING)
-    raw = search.search(topic, language=target, max_results=settings.search_max_results)
-    if not raw:
-        raise RuntimeError("No search results found for the topic.")
-    _complete_stage(
-        db, podcast, Stage.RESEARCHING, f"{len(raw)} results via {search.name}"
-    )
-
-    # --- Stage 2: Agent 1 filter -------------------------------------------
-    _start_stage(db, podcast, Stage.FILTERING)
-    filtered = SearchFilterAgent(llm).run(
+    t0 = time.perf_counter()
+    outcome = SearchFilterAgent(llm).run(
         topic=topic,
         target_language=target,
         native_language=native,
         cefr_level=cefr,
-        results=raw,
     )
-    selected = filtered.selected[:5]
+    if outcome.retrieved_count == 0:
+        raise RuntimeError("No search results found for the topic.")
+    _complete_stage(
+        db,
+        podcast,
+        Stage.RESEARCHING,
+        f"{outcome.retrieved_count} sources retrieved via MCP topic retrieval",
+    )
+
+    _start_stage(db, podcast, Stage.FILTERING)
+    selected = outcome.selection.selected[:5]
     podcast.selected_sources = [s.model_dump() for s in selected]
+    materials = outcome.materials
     _complete_stage(
         db, podcast, Stage.FILTERING, f"{len(selected)} sources selected"
     )
-
-    # Build the source material for the adapter from the selected sources.
-    by_url = {r.url: r for r in raw}
-    parts = []
-    for s in selected:
-        raw_match = by_url.get(s.url)
-        body = raw_match.content if raw_match else ""
-        parts.append(f"# {s.title}\nURL: {s.url}\n{body}")
-    materials = "\n\n".join(parts) or "\n\n".join(r.content for r in raw[:5])
+    _log_step(
+        db,
+        podcast,
+        index=step_no,
+        agent=SearchFilterAgent.name,
+        stage=Stage.FILTERING,
+        inputs={"topic": topic, "target_language": target, "cefr_level": cefr},
+        output={
+            "selected": [s.model_dump() for s in selected],
+            "retrieved_count": outcome.retrieved_count,
+        },
+        detail=f"{outcome.retrieved_count} retrieved, {len(selected)} selected",
+        duration_ms=int((time.perf_counter() - t0) * 1000),
+    )
+    step_no += 1
 
     content_adapter = ContentAdapterAgent(llm)
     scriptwriter = ScriptwriterAgent(llm)
@@ -189,6 +251,8 @@ def _run(
     while True:
         if adapted is None or feedback_for_content is not None:
             _start_stage(db, podcast, Stage.ADAPTING)
+            t0 = time.perf_counter()
+            used_feedback = feedback_for_content
             adapted = content_adapter.run(
                 topic=topic,
                 target_language=target,
@@ -200,11 +264,25 @@ def _run(
             podcast.adapted_content = adapted.model_dump()
             podcast.title = adapted.title
             _complete_stage(db, podcast, Stage.ADAPTING)
+            _log_step(
+                db,
+                podcast,
+                index=step_no,
+                agent=content_adapter.name,
+                stage=Stage.ADAPTING,
+                iteration=attempt,
+                inputs={"feedback": used_feedback, "materials_chars": len(materials)},
+                output=adapted.model_dump(),
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+            )
+            step_no += 1
             feedback_for_content = None
             script = None  # content changed -> the script must be rewritten
 
         if script is None or feedback_for_script is not None:
             _start_stage(db, podcast, Stage.SCRIPTING)
+            t0 = time.perf_counter()
+            used_feedback = feedback_for_script
             script = scriptwriter.run(
                 adapted=adapted,
                 target_language=target,
@@ -216,9 +294,22 @@ def _run(
             if not podcast.title:
                 podcast.title = script.title
             _complete_stage(db, podcast, Stage.SCRIPTING)
+            _log_step(
+                db,
+                podcast,
+                index=step_no,
+                agent=scriptwriter.name,
+                stage=Stage.SCRIPTING,
+                iteration=attempt,
+                inputs={"feedback": used_feedback},
+                output=script.model_dump(),
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+            )
+            step_no += 1
             feedback_for_script = None
 
         _start_stage(db, podcast, Stage.EVALUATING)
+        t0 = time.perf_counter()
         evaluation = evaluator.run(
             script=script,
             adapted=adapted,
@@ -247,6 +338,19 @@ def _run(
             f"{'passed' if passed else 'needs revision'} "
             f"(overall {evaluation.overall_score:.1f}/5)",
         )
+        _log_step(
+            db,
+            podcast,
+            index=step_no,
+            agent=evaluator.name,
+            stage=Stage.EVALUATING,
+            iteration=attempt,
+            output=evaluation.model_dump(),
+            detail=f"{'passed' if passed else 'needs revision'} "
+            f"(overall {evaluation.overall_score:.1f}/5)",
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+        step_no += 1
 
         if passed:
             break
@@ -271,8 +375,15 @@ def _run(
 
     # --- Stage 6: audio generation -----------------------------------------
     _start_stage(db, podcast, Stage.GENERATING_AUDIO)
+    t0 = time.perf_counter()
     segments = _script_to_segments(script, target, native)
     out_path = storage.audio_path(podcast.id, "wav")
+    log.info(
+        "podcast=%s synthesizing %d segment(s) via %s",
+        podcast.id,
+        len(segments),
+        tts.name,
+    )
     result = tts.synthesize(segments, out_path=out_path)
     podcast.audio_filename = os.path.basename(result.path)
     podcast.audio_format = result.format
@@ -283,6 +394,22 @@ def _run(
         Stage.GENERATING_AUDIO,
         f"{result.duration_seconds:.0f}s via {tts.name}",
     )
+    _log_step(
+        db,
+        podcast,
+        index=step_no,
+        agent=tts.name,
+        stage=Stage.GENERATING_AUDIO,
+        output={
+            "segments": len(segments),
+            "duration_seconds": result.duration_seconds,
+            "format": result.format,
+            "filename": podcast.audio_filename,
+        },
+        detail=f"{result.duration_seconds:.0f}s via {tts.name}",
+        duration_ms=int((time.perf_counter() - t0) * 1000),
+    )
+    step_no += 1
 
     # --- Done --------------------------------------------------------------
     podcast.current_stage = Stage.DONE.value

@@ -51,6 +51,23 @@ class EvaluationOut(BaseModel):
     created_at: datetime
 
 
+class AgentStepOut(BaseModel):
+    """One logged step of the multi-agent pipeline, for step-by-step review."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    step_index: int
+    agent: str
+    stage: str
+    iteration: int
+    status: str
+    inputs: Optional[dict] = None
+    output: Optional[dict] = None
+    detail: Optional[str] = None
+    duration_ms: Optional[int] = None
+    created_at: datetime
+
+
 class PodcastSummary(BaseModel):
     """Compact representation used in the dashboard list."""
 

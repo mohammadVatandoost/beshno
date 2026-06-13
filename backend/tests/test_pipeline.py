@@ -40,6 +40,16 @@ def test_full_pipeline_with_mocks():
     assert podcast.audio_filename
     assert podcast.audio_duration_seconds and podcast.audio_duration_seconds > 0
     assert len(podcast.evaluations) >= 1
+
+    # agent steps are logged per session for step-by-step review
+    steps = sorted(podcast.agent_steps, key=lambda s: s.step_index)
+    assert steps, "agent steps should be logged"
+    agents_seen = [s.agent for s in steps]
+    for expected in ("search_filter", "content_adapter", "scriptwriter", "evaluator"):
+        assert expected in agents_seen, f"missing logged step for {expected}"
+    # step indices are contiguous and ordered
+    assert [s.step_index for s in steps] == list(range(len(steps)))
+    assert all(s.podcast_id == pid for s in steps)
     # stage history should record every stage as completed
     completed = {e["stage"] for e in podcast.stage_history if e["state"] == "completed"}
     for stage in ("researching", "filtering", "adapting", "scripting", "evaluating", "generating_audio"):
@@ -93,3 +103,10 @@ def test_api_create_status_and_audio():
         listing = client.get("/api/podcasts")
         assert listing.status_code == 200
         assert any(p["id"] == pid for p in listing.json())
+
+        steps = client.get(f"/api/podcasts/{pid}/steps")
+        assert steps.status_code == 200
+        body = steps.json()
+        assert body, "steps endpoint should return logged agent steps"
+        assert body[0]["step_index"] == 0
+        assert {"search_filter", "scriptwriter"} <= {s["agent"] for s in body}

@@ -9,7 +9,7 @@ client-side). If the installed SDK predates that helper, we fall back to
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 import anthropic
 from pydantic import BaseModel
@@ -17,6 +17,8 @@ from pydantic import BaseModel
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+ToolExecutor = Callable[[str, dict], str]
 
 # JSON-schema keywords that Claude structured outputs does not support.
 _UNSUPPORTED_KEYS = {
@@ -117,4 +119,81 @@ class ClaudeLLM:
         text = _first_text(resp)
         if not text:
             raise RuntimeError("Claude returned no text content")
+        return schema.model_validate_json(text)
+
+    def structured_with_tools(
+        self,
+        *,
+        system: str,
+        user: str,
+        tools: list[dict],
+        execute_tool: ToolExecutor,
+        schema: type[T],
+        mock_bootstrap: Callable[[ToolExecutor], T],  # unused for the real model
+        max_tokens: int = 4000,
+        max_steps: int = 3,
+    ) -> T:
+        """Drive an agentic tool-use loop, returning schema-constrained output.
+
+        Two phases. First a tool-use loop offering ``tools`` with **no** output
+        format — passing ``output_config.format`` alongside tools makes the
+        model short-circuit straight to JSON instead of calling the tools. Once
+        the model stops calling tools (or the step budget is hit), a final call
+        with ``output_config.format`` and no tools extracts the structured
+        answer from the gathered context.
+        """
+        messages: list[dict] = [{"role": "user", "content": user}]
+
+        # --- Phase 1: tool-use loop ---------------------------------------
+        for _ in range(max_steps):
+            resp = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                thinking={"type": "adaptive"},
+                system=system,
+                messages=messages,
+                tools=tools,
+            )
+            if getattr(resp, "stop_reason", None) == "refusal":
+                raise RuntimeError("Claude refused the request")
+
+            tool_uses = [
+                b for b in (resp.content or []) if getattr(b, "type", None) == "tool_use"
+            ]
+            messages.append({"role": "assistant", "content": resp.content})
+            if not tool_uses:
+                break
+
+            results = []
+            for tu in tool_uses:
+                try:
+                    output = execute_tool(tu.name, dict(tu.input or {}))
+                except Exception as exc:  # surface the failure to the model
+                    output = f"Tool '{tu.name}' failed: {exc}"
+                results.append(
+                    {"type": "tool_result", "tool_use_id": tu.id, "content": output}
+                )
+            messages.append({"role": "user", "content": results})
+
+        # --- Phase 2: force the structured answer (no tools) --------------
+        json_schema = _strip_unsupported(schema.model_json_schema())
+        messages.append(
+            {
+                "role": "user",
+                "content": "Now return your final selection as structured output.",
+            }
+        )
+        resp = self._client.messages.create(
+            model=self._model,
+            max_tokens=max_tokens,
+            thinking={"type": "adaptive"},
+            system=system,
+            messages=messages,
+            output_config={"format": {"type": "json_schema", "schema": json_schema}},
+        )
+        if getattr(resp, "stop_reason", None) == "refusal":
+            raise RuntimeError("Claude refused the request")
+        text = _first_text(resp)
+        if not text:
+            raise RuntimeError("Claude returned no parseable structured output")
         return schema.model_validate_json(text)

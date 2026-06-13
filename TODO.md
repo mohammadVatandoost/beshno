@@ -6,5 +6,5 @@
 
 
 tech debts:
-- create mcp for the topic retrieval API
-- set step budget for the agent loop
+- [x] create mcp for the topic retrieval API
+- [x] set step budget for the agent loop
