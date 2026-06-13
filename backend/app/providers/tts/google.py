@@ -62,6 +62,81 @@ class GoogleTTS:
             # Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS, etc.).
             self._client = texttospeech.TextToSpeechClient()
 
+        # Caches so the catalogue is fetched at most once per language and a
+        # voice is resolved at most once per (language, gender).
+        self._voices_by_lang: dict[str, list] = {}
+        self._voice_cache: dict[str, object] = {}
+
+    def _list_voices(self, language_code: str) -> list:
+        """Available voices for a language, cached. Empty list on failure."""
+        if language_code not in self._voices_by_lang:
+            resp = self._client.list_voices(language_code=language_code)
+            self._voices_by_lang[language_code] = list(resp.voices)
+        return self._voices_by_lang[language_code]
+
+    def _pick_voice(self, tts, language_code: str, gender: str):
+        """Best-tier voice for (language, gender), with graceful fallback.
+
+        Prefers Chirp 3: HD -> Neural2 -> WaveNet -> Standard. If discovery
+        fails or nothing matches, returns a gender-only selection and lets the
+        API pick its default voice for the language.
+        """
+        key = f"{language_code}:{gender}"
+        if key in self._voice_cache:
+            return self._voice_cache[key]
+
+        target_gender = (
+            tts.SsmlVoiceGender.FEMALE
+            if gender == "female"
+            else tts.SsmlVoiceGender.MALE
+        )
+        chosen_name: str | None = None
+        try:
+            candidates = [
+                v
+                for v in self._list_voices(language_code)
+                if language_code in v.language_codes
+                and v.ssml_gender == target_gender
+            ]
+            if candidates:
+                # Highest tier wins; voice name breaks ties deterministically.
+                best = max(candidates, key=lambda v: (_tier_rank(v.name), v.name))
+                chosen_name = best.name
+        except Exception as exc:  # noqa: BLE001 - discovery is best-effort
+            log.warning(
+                "GoogleTTS: voice discovery failed for %s/%s (%s); "
+                "falling back to API default voice.",
+                language_code,
+                gender,
+                exc,
+            )
+
+        if chosen_name:
+            voice = tts.VoiceSelectionParams(
+                language_code=language_code,
+                name=chosen_name,
+                ssml_gender=target_gender,
+            )
+            log.info(
+                "GoogleTTS: selected voice %s (tier=%d) for %s/%s",
+                chosen_name,
+                _tier_rank(chosen_name),
+                language_code,
+                gender,
+            )
+        else:
+            voice = tts.VoiceSelectionParams(
+                language_code=language_code, ssml_gender=target_gender
+            )
+            log.info(
+                "GoogleTTS: no named voice for %s/%s; using API default.",
+                language_code,
+                gender,
+            )
+
+        self._voice_cache[key] = voice
+        return voice
+
     def synthesize(
         self, segments: list[SpeechSegment], *, out_path: str
     ) -> SynthesisResult:
@@ -75,14 +150,7 @@ class GoogleTTS:
             if not seg.text.strip():
                 log.debug("GoogleTTS: skipping empty segment %d", i)
                 continue
-            gender = (
-                tts.SsmlVoiceGender.FEMALE
-                if seg.gender == "female"
-                else tts.SsmlVoiceGender.MALE
-            )
-            voice = tts.VoiceSelectionParams(
-                language_code=seg.language_code, ssml_gender=gender
-            )
+            voice = self._pick_voice(tts, seg.language_code, seg.gender)
             audio_config = tts.AudioConfig(
                 audio_encoding=tts.AudioEncoding.LINEAR16,
                 sample_rate_hertz=_SAMPLE_RATE,

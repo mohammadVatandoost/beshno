@@ -9,6 +9,8 @@ pydantic-settings>=2.2
 # Database
 SQLAlchemy>=2.0.30
 psycopg[binary]>=3.1
+# Schema migrations
+alembic>=1.13
 
 # LLM (Claude / Anthropic) — latest recommended for messages.parse + Opus 4.8
 anthropic>=0.40
