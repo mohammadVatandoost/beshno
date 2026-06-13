@@ -343,3 +343,251 @@ def test_tone_selection():
         d2 = client.get(f"/api/podcasts/{r2.json()['id']}").json()
         assert d2["tone"] == "auto"
         assert d2["resolved_tone"] == "nerdy"  # tech topic -> nerdy
+
+
+def test_research_source_cap():
+    """The research step never gathers more than its source cap, across calls."""
+    from app.mcp.client import TopicRetrievalMCP
+
+    class _FakeResult:
+        def __init__(self, results):
+            self.structuredContent = {"results": results}
+            self.content: list = []
+
+    mcp = TopicRetrievalMCP(max_sources=3)
+    batch1 = [
+        {"url": f"https://a/{i}", "title": f"t{i}", "content": "c", "score": 0.5}
+        for i in range(5)
+    ]
+    mcp._record_and_format(_FakeResult(batch1))
+    assert len(mcp.gathered) == 3  # capped at max_sources
+
+    # A second search cannot push past the cap.
+    batch2 = [
+        {"url": f"https://b/{i}", "title": f"u{i}", "content": "c", "score": 0.4}
+        for i in range(4)
+    ]
+    msg = mcp._record_and_format(_FakeResult(batch2))
+    assert len(mcp.gathered) == 3
+    assert "Source limit reached" in msg
+
+
+def test_submit_generation_runs_pipeline():
+    """submit_generation dispatches the pipeline (eager mode in tests -> inline)."""
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import Podcast
+    from app.pipeline import submit_generation
+
+    init_db()
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="Spanish",
+        cefr_level="A2",
+        topic_description="clouds",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    submit_generation(pid)  # eager in tests -> runs synchronously inline
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    assert podcast.status in (
+        PodcastStatus.READY.value,
+        PodcastStatus.NEEDS_REVIEW.value,
+    )
+    assert podcast.current_stage == Stage.DONE.value
+    db.close()
+
+
+def test_audio_and_exercises_run_in_parallel(monkeypatch):
+    """Stage 6 (TTS) and Stage 7 (exercises) overlap in time.
+
+    A 2-party barrier is the proof of concurrency: both tasks must be in-flight
+    simultaneously to pass it. If the orchestrator ran them sequentially, the
+    first task would block on the barrier and time out (BrokenBarrierError),
+    leaving ``overlapped`` False and failing the assertion.
+    """
+    import threading
+
+    from app.agents import ExerciseGeneratorAgent
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import Podcast
+    from app.pipeline import submit_generation
+    from app.providers.tts.mock import MockTTS
+
+    rendezvous = threading.Barrier(2, timeout=8)
+    state = {"overlapped": False}
+
+    orig_synth = MockTTS.synthesize
+
+    def synth(self, segments, *, out_path):
+        try:
+            rendezvous.wait()
+            state["overlapped"] = True
+        except threading.BrokenBarrierError:
+            pass
+        return orig_synth(self, segments, out_path=out_path)
+
+    orig_run = ExerciseGeneratorAgent.run
+
+    def run(self, **kwargs):
+        try:
+            rendezvous.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return orig_run(self, **kwargs)
+
+    monkeypatch.setattr(MockTTS, "synthesize", synth)
+    monkeypatch.setattr(ExerciseGeneratorAgent, "run", run)
+
+    init_db()
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="German",
+        cefr_level="A2",
+        topic_description="parallel finalize",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    submit_generation(pid)  # eager -> inline; inner pool runs the two tasks
+
+    assert state["overlapped"], "audio and exercises did not run concurrently"
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    assert podcast.audio_filename  # audio synthesis still produced output
+    assert podcast.exercises  # exercises still produced output
+    completed = {e["stage"] for e in podcast.stage_history if e["state"] == "completed"}
+    assert {"generating_audio", "exercises"} <= completed
+    db.close()
+
+
+def test_generation_telemetry_recorded():
+    """Token usage + timing are captured per-step and aggregated on the podcast."""
+    from sqlalchemy import select
+
+    from app.database import SessionLocal, init_db
+    from app.enums import PodcastStatus, Stage
+    from app.models import AgentStep, Podcast
+    from app.pipeline import submit_generation
+
+    init_db()
+    db = SessionLocal()
+    podcast = Podcast(
+        native_language="English",
+        target_language="Spanish",
+        cefr_level="A2",
+        topic_description="telemetry test",
+        status=PodcastStatus.PENDING.value,
+        current_stage=Stage.QUEUED.value,
+        stage_history=[],
+    )
+    db.add(podcast)
+    db.commit()
+    pid = podcast.id
+    db.close()
+
+    submit_generation(pid)  # eager -> runs inline
+
+    db = SessionLocal()
+    podcast = db.get(Podcast, pid)
+    # Aggregates recorded (the mock LLM reports estimated token usage).
+    assert podcast.total_input_tokens > 0
+    assert podcast.total_output_tokens > 0
+    assert podcast.llm_calls > 0
+    assert podcast.total_tokens == (
+        podcast.total_input_tokens + podcast.total_output_tokens
+    )
+    assert podcast.generation_ms is not None and podcast.generation_ms >= 0
+
+    steps = (
+        db.execute(select(AgentStep).where(AgentStep.podcast_id == pid))
+        .scalars()
+        .all()
+    )
+    by_agent = {s.agent: s for s in steps}
+    # An LLM step has token usage attributed to it...
+    assert by_agent["scriptwriter"].input_tokens > 0
+    assert by_agent["scriptwriter"].output_tokens > 0
+    # ...while the TTS audio step (no LLM call) records none.
+    tts_steps = [s for s in steps if s.stage == Stage.GENERATING_AUDIO.value]
+    assert tts_steps and all((s.input_tokens or 0) == 0 for s in tts_steps)
+    # Per-step token sums never exceed the run aggregate.
+    assert sum(s.input_tokens or 0 for s in steps) <= podcast.total_input_tokens
+    total_tokens = podcast.total_tokens
+    db.close()
+
+    # The detail API exposes the computed total + cost estimate.
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/podcasts/{pid}").json()
+    assert detail["total_tokens"] == total_tokens
+    assert detail["cost_estimate_usd"] >= 0
+    assert detail["generation_ms"] is not None
+
+
+def test_claude_thinking_mode_resolution():
+    """ANTHROPIC_THINKING controls the thinking kwarg sent to the model."""
+    from app.providers.llm.claude import ClaudeLLM
+
+    off = ClaudeLLM(api_key="k", model="m", thinking="off")
+    assert off._thinking_kwargs(8000) == {}
+
+    adaptive = ClaudeLLM(api_key="k", model="m", thinking="adaptive")
+    assert adaptive._thinking_kwargs(8000) == {"thinking": {"type": "adaptive"}}
+
+    enabled = ClaudeLLM(api_key="k", model="m", thinking="enabled:3000")
+    assert enabled._thinking_kwargs(8000) == {
+        "thinking": {"type": "enabled", "budget_tokens": 3000}
+    }
+    # When max_tokens leaves no room for the answer, thinking is skipped.
+    assert enabled._thinking_kwargs(1500) == {}
+
+
+def test_claude_disables_thinking_when_model_rejects_it():
+    """A model that rejects the thinking param triggers a no-thinking retry."""
+    import httpx
+    from anthropic import BadRequestError
+
+    from app.providers.llm.claude import ClaudeLLM
+
+    llm = ClaudeLLM(api_key="k", model="claude-haiku-4-5", thinking="adaptive")
+    calls: list[dict] = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        if "thinking" in kwargs:
+            req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise BadRequestError(
+                "adaptive thinking is not supported on this model",
+                response=httpx.Response(400, request=req),
+                body=None,
+            )
+        return object()
+
+    llm._client.messages.create = fake_create  # type: ignore[assignment]
+    resp = llm._create(model="m", max_tokens=4000, system="s", messages=[])
+
+    assert resp is not None
+    assert llm._thinking_mode == "off"  # disabled after the rejection
+    assert len(calls) == 2  # first attempt with thinking, retry without it
+    assert "thinking" in calls[0] and "thinking" not in calls[1]

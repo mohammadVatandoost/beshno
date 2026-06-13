@@ -78,6 +78,16 @@ class Podcast(Base):
     audio_format: Mapped[str] = mapped_column(String(8), default="wav")
     audio_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # --- Telemetry (LLM token usage + wall-clock generation time) -----------
+    total_input_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    total_output_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    llm_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    generation_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     evaluations: Mapped[list["Evaluation"]] = relationship(
         back_populates="podcast",
         cascade="all, delete-orphan",
@@ -93,6 +103,10 @@ class Podcast(Base):
         cascade="all, delete-orphan",
         order_by="ExerciseAttempt.created_at",
     )
+
+    @property
+    def total_tokens(self) -> int:
+        return (self.total_input_tokens or 0) + (self.total_output_tokens or 0)
 
     @property
     def has_audio(self) -> bool:
@@ -151,6 +165,9 @@ class AgentStep(Base):
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # LLM token usage for this step (None for non-LLM steps like TTS audio).
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     podcast: Mapped[Podcast] = relationship(back_populates="agent_steps")

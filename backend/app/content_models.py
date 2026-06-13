@@ -109,7 +109,6 @@ class EvaluationScores(BaseModel):
     """Per-dimension quality scores (0..5) produced by the Evaluator agent."""
 
     cefr_compliance: float = Field(ge=0, le=5)
-    language_balance: float = Field(ge=0, le=5)
     pedagogical_quality: float = Field(ge=0, le=5)
     factual_accuracy: float = Field(ge=0, le=5)
     engagement_flow: float = Field(ge=0, le=5)

@@ -13,6 +13,7 @@ from . import __version__
 from .api.routes_podcasts import router
 from .config import get_settings
 from .database import init_db
+from .pipeline import shutdown_generation
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,6 +49,8 @@ async def lifespan(app: FastAPI):
             ", ".join(mocks),
         )
     yield
+    # Stop accepting new generation jobs on shutdown; let in-flight ones finish.
+    shutdown_generation()
 
 
 app = FastAPI(title="Beshno API", version=__version__, lifespan=lifespan)

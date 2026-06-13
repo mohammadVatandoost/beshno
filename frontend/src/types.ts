@@ -73,7 +73,6 @@ export interface TranscriptCue {
 
 export interface EvaluationScores {
   cefr_compliance: number;
-  language_balance: number;
   pedagogical_quality: number;
   factual_accuracy: number;
   engagement_flow: number;
@@ -147,6 +146,14 @@ export interface PodcastDetail extends PodcastSummary {
   audio_format: string;
   has_audio: boolean;
   has_exercises: boolean;
+  // Generation telemetry
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  llm_calls: number;
+  generation_ms?: number | null;
+  cost_estimate_usd: number;
+  cost_pricing_label: string;
 }
 
 export interface Providers {

@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # --- LLM (Anthropic / Claude) ------------------------------------------
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-4-8"
+    # Extended-thinking mode for Claude calls: "adaptive" (Opus 4.7+/Fable),
+    # "off" (models without thinking, e.g. Haiku 4.5), or "enabled[:budget]".
+    # Auto-falls back to "off" if the configured model rejects the mode.
+    anthropic_thinking: str = "adaptive"
     # auto | claude | mock
     llm_provider: str = "auto"
 
@@ -44,6 +48,9 @@ class Settings(BaseSettings):
     # retrieval): the max number of LLM turns before a final answer is forced.
     # Use >= 2 so the agent gets at least one tool call before answering.
     agent_max_steps: int = 3
+    # Background worker threads that run the generation pipeline off the request
+    # path. 0 (or less) runs generation inline/synchronously (used by tests).
+    pipeline_workers: int = 4
 
     # --- Storage ------------------------------------------------------------
     storage_dir: str = "./storage"

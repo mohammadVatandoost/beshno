@@ -1,9 +1,13 @@
 """Claude (Anthropic) LLM provider using structured outputs.
 
-Primary path uses ``messages.parse`` with a Pydantic ``output_format`` (the SDK
-strips JSON-schema constraints Claude doesn't support and validates the result
-client-side). If the installed SDK predates that helper, we fall back to
-``messages.create`` with ``output_config.format`` and validate manually.
+Uses ``messages.stream`` with ``output_config.format`` and a constraint-stripped
+schema, validating the JSON client-side (with a non-streaming ``messages.create``
+fallback for older SDKs).
+
+Extended thinking is configurable per the model's capabilities: ``adaptive``
+(Opus 4.7+/Fable), ``off`` (models without thinking, e.g. Haiku 4.5), or
+``enabled[:budget]`` (a fixed thinking budget). If the configured model rejects
+the thinking parameter, it is disabled automatically for the rest of the run.
 """
 
 from __future__ import annotations
@@ -20,6 +24,11 @@ T = TypeVar("T", bound=BaseModel)
 
 ToolExecutor = Callable[[str, dict], str]
 
+# A thinking budget needs this much headroom under max_tokens for the answer;
+# below it, thinking is skipped for that call rather than risk a 400.
+_MIN_ANSWER_HEADROOM = 1024
+_DEFAULT_THINKING_BUDGET = 2000
+
 # JSON-schema keywords that Claude structured outputs does not support.
 _UNSUPPORTED_KEYS = {
     "minLength",
@@ -35,6 +44,26 @@ _UNSUPPORTED_KEYS = {
     "format",
     "default",
 }
+
+
+def _parse_thinking(value: str | None) -> tuple[str, int]:
+    """Parse the configured thinking mode into ``(mode, budget)``.
+
+    Accepts ``adaptive`` (default), ``off``/``disabled``/``none``/``""``, or
+    ``enabled``/``enabled:<budget>``.
+    """
+    v = (value or "").strip().lower()
+    if v in ("", "off", "none", "disabled", "false", "0"):
+        return "off", 0
+    if v.startswith("enabled"):
+        budget = _DEFAULT_THINKING_BUDGET
+        if ":" in v:
+            try:
+                budget = int(v.split(":", 1)[1])
+            except ValueError:
+                pass
+        return "enabled", max(_MIN_ANSWER_HEADROOM, budget)
+    return "adaptive", 0
 
 
 def _first_text(resp: Any) -> str:
@@ -62,9 +91,77 @@ def _strip_unsupported(node: Any) -> Any:
 class ClaudeLLM:
     name = "claude"
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, thinking: str = "adaptive") -> None:
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
+        self._thinking_mode, self._thinking_budget = _parse_thinking(thinking)
+        # Optional per-run telemetry recorder, attached by the orchestrator.
+        self._recorder = None
+
+    # --- Thinking handling -------------------------------------------------
+    def _thinking_kwargs(self, max_tokens: int) -> dict:
+        """Build the ``thinking`` kwarg for a call, sized against ``max_tokens``."""
+        mode = self._thinking_mode
+        if mode == "off":
+            return {}
+        if mode == "adaptive":
+            return {"thinking": {"type": "adaptive"}}
+        # "enabled": the budget must leave room for the answer within max_tokens.
+        budget = min(self._thinking_budget, max_tokens - _MIN_ANSWER_HEADROOM)
+        if budget < _MIN_ANSWER_HEADROOM:
+            return {}
+        return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+
+    def _note_thinking_unsupported(self, exc: Exception) -> bool:
+        """Disable thinking for this instance if the model rejected it."""
+        if self._thinking_mode != "off" and "thinking" in str(exc).lower():
+            log.warning(
+                "model %s rejected thinking (%s); disabling thinking for this run",
+                self._model,
+                exc,
+            )
+            self._thinking_mode = "off"
+            return True
+        return False
+
+    def _create(self, *, max_tokens: int, **kwargs: Any) -> Any:
+        """``messages.create`` with one retry that drops thinking if rejected."""
+        try:
+            return self._client.messages.create(
+                max_tokens=max_tokens, **kwargs, **self._thinking_kwargs(max_tokens)
+            )
+        except anthropic.BadRequestError as exc:
+            if self._note_thinking_unsupported(exc):
+                return self._client.messages.create(
+                    max_tokens=max_tokens, **kwargs, **self._thinking_kwargs(max_tokens)
+                )
+            raise
+
+    def _stream_final(self, *, max_tokens: int, **kwargs: Any) -> Any:
+        """Stream a response and return the final message, with the same retry."""
+        try:
+            with self._client.messages.stream(
+                max_tokens=max_tokens, **kwargs, **self._thinking_kwargs(max_tokens)
+            ) as stream:
+                return stream.get_final_message()
+        except anthropic.BadRequestError as exc:
+            if self._note_thinking_unsupported(exc):
+                with self._client.messages.stream(
+                    max_tokens=max_tokens, **kwargs, **self._thinking_kwargs(max_tokens)
+                ) as stream:
+                    return stream.get_final_message()
+            raise
+
+    def _record_usage(self, resp: Any) -> None:
+        """Add this response's token usage to the run's recorder, if attached."""
+        rec = getattr(self, "_recorder", None)
+        usage = getattr(resp, "usage", None)
+        if rec is None or usage is None:
+            return
+        rec.record(
+            getattr(usage, "input_tokens", 0) or 0,
+            getattr(usage, "output_tokens", 0) or 0,
+        )
 
     def structured(
         self,
@@ -75,36 +172,27 @@ class ClaudeLLM:
         mock_example: Optional[T] = None,
         max_tokens: int = 8000,
     ) -> T:
-        # Stream the response so a generous max_tokens (room for adaptive thinking
-        # AND the JSON) is safe: streaming avoids the SDK's non-streaming timeout
-        # guard and request timeouts on large outputs. We use output_config.format
-        # with a constraint-stripped schema and validate the JSON ourselves.
+        # Stream the response so a generous max_tokens (room for thinking AND the
+        # JSON) is safe: streaming avoids the SDK's non-streaming timeout guard and
+        # request timeouts on large outputs. We use output_config.format with a
+        # constraint-stripped schema and validate the JSON ourselves.
         json_schema = _strip_unsupported(schema.model_json_schema())
-        output_config = {"format": {"type": "json_schema", "schema": json_schema}}
+        common = dict(
+            model=self._model,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            output_config={"format": {"type": "json_schema", "schema": json_schema}},
+        )
         try:
-            with self._client.messages.stream(
-                model=self._model,
-                max_tokens=max_tokens,
-                thinking={"type": "adaptive"},
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                output_config=output_config,
-            ) as stream:
-                resp = stream.get_final_message()
+            resp = self._stream_final(max_tokens=max_tokens, **common)
         except (AttributeError, TypeError) as exc:
             log.warning(
                 "messages.stream(output_config=...) unavailable (%s); using "
                 "non-streaming create.",
                 exc,
             )
-            resp = self._client.messages.create(
-                model=self._model,
-                max_tokens=max_tokens,
-                thinking={"type": "adaptive"},
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                output_config=output_config,
-            )
+            resp = self._create(max_tokens=max_tokens, **common)
+        self._record_usage(resp)
         return self._parse_structured(resp, schema, max_tokens)
 
     @staticmethod
@@ -158,14 +246,14 @@ class ClaudeLLM:
 
         # --- Phase 1: tool-use loop ---------------------------------------
         for _ in range(max_steps):
-            resp = self._client.messages.create(
+            resp = self._create(
                 model=self._model,
                 max_tokens=max_tokens,
-                thinking={"type": "adaptive"},
                 system=system,
                 messages=messages,
                 tools=tools,
             )
+            self._record_usage(resp)
             if getattr(resp, "stop_reason", None) == "refusal":
                 raise RuntimeError("Claude refused the request")
 
@@ -195,14 +283,14 @@ class ClaudeLLM:
                 "content": "Now return your final selection as structured output.",
             }
         )
-        resp = self._client.messages.create(
+        resp = self._create(
             model=self._model,
             max_tokens=max_tokens,
-            thinking={"type": "adaptive"},
             system=system,
             messages=messages,
             output_config={"format": {"type": "json_schema", "schema": json_schema}},
         )
+        self._record_usage(resp)
         if getattr(resp, "stop_reason", None) == "refusal":
             raise RuntimeError("Claude refused the request")
         text = _first_text(resp)
