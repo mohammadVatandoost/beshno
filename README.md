@@ -1,15 +1,24 @@
 # Beshno 🎧
 
 **Beshno** is an AI-powered, personalized podcast generator for language learners.
-You pick a topic and your languages; Beshno researches the topic, rewrites it to
-your exact proficiency level (CEFR A1–C2), turns it into a two-person podcast, runs
-a quality gate over it, and produces natural audio you can play in the browser.
+You pick a topic, your languages, a runtime and a narrator tone; Beshno researches
+the topic, rewrites it to your exact proficiency level (CEFR A1–C2), turns it into
+a **two-phase** podcast, runs a self-correcting quality gate over it, produces
+natural audio with a transcript that highlights in sync with playback, and hands
+you an **interactive practice session** to test what you heard.
 
-Each podcast has two voices:
+Each episode is built around two voices and plays in two phases:
 
 - **The learner (Mia)** speaks the **target language** at your CEFR level.
 - **The teacher (Leo)** speaks your **native language**, explaining the grammar,
   vocabulary, idioms and culture in what Mia just said.
+- **Phase 1** plays the whole target-language piece; **Phase 2** replays it
+  chunk-by-chunk with a breakdown after each chunk.
+
+At B2+ Beshno switches to **full immersion** (100% target language). It also
+remembers the vocabulary you've already been taught and avoids repeating it across
+episodes (spaced repetition), and exposes per-run **generation analytics** (tokens,
+latency and a cost estimate).
 
 > Beshno runs **end-to-end with zero API keys** using built-in mock providers, so
 > you can try the whole flow immediately. Add real keys to switch on Claude, Tavily
@@ -240,21 +249,6 @@ Interactive docs at `/docs`.
 
 Every evaluator verdict (scores, feedback, issues) is persisted to PostgreSQL for
 transparency and tuning.
-
----
-
-## Model benchmark
-
-The pipeline was run end-to-end against two Claude models and graded by the
-evaluator (overall quality, out of 5):
-
-| Model           | Score   |
-| --------------- | ------- |
-| Claude Sonnet   | 4.7 / 5 |
-| Claude Haiku    | 4.3 / 5 |
-
-Sonnet produces higher-quality scripts; Haiku is faster and cheaper while still
-clearing the quality gate. Set the model with `ANTHROPIC_MODEL`.
 
 ---
 
