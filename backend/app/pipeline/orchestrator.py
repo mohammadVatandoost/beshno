@@ -144,30 +144,60 @@ def _script_to_segments(
     CONTENT_VOICE = "female"  # learner / content voice
     EXPLAIN_VOICE = "male"  # teacher / explainer voice
     cue_code = target_code if immersion else native_code
+    cue_lang = "target" if immersion else "native"
     segments: list[SpeechSegment] = []
 
     if script.intro.strip():
         segments.append(
-            SpeechSegment(script.intro, cue_code, EXPLAIN_VOICE, pause_after=0.7)
+            SpeechSegment(
+                script.intro,
+                cue_code,
+                EXPLAIN_VOICE,
+                pause_after=0.7,
+                cue={"kind": "intro", "phase": "intro", "group": None, "lang": cue_lang},
+            )
         )
 
     # Phase 1 — full playback in the target language, uninterrupted.
-    for seg in script.segments:
+    for i, seg in enumerate(script.segments):
         if seg.target_text.strip():
             segments.append(
-                SpeechSegment(seg.target_text, target_code, CONTENT_VOICE, pause_after=0.12)
+                SpeechSegment(
+                    seg.target_text,
+                    target_code,
+                    CONTENT_VOICE,
+                    pause_after=0.12,
+                    cue={"kind": "full", "phase": "playback", "group": i, "lang": "target"},
+                )
             )
 
     if script.breakdown_intro.strip():
         segments.append(
-            SpeechSegment(script.breakdown_intro, cue_code, EXPLAIN_VOICE, pause_after=0.7)
+            SpeechSegment(
+                script.breakdown_intro,
+                cue_code,
+                EXPLAIN_VOICE,
+                pause_after=0.7,
+                cue={
+                    "kind": "breakdown_intro",
+                    "phase": "breakdown",
+                    "group": None,
+                    "lang": cue_lang,
+                },
+            )
         )
 
     # Phase 2 — each chunk, then its breakdown.
-    for seg in script.segments:
+    for i, seg in enumerate(script.segments):
         if seg.target_text.strip():
             segments.append(
-                SpeechSegment(seg.target_text, target_code, CONTENT_VOICE, pause_after=0.25)
+                SpeechSegment(
+                    seg.target_text,
+                    target_code,
+                    CONTENT_VOICE,
+                    pause_after=0.25,
+                    cue={"kind": "segment", "phase": "breakdown", "group": i, "lang": "target"},
+                )
             )
         runs = [r for r in seg.native_explanation if r.text.strip()]
         for j, run in enumerate(runs):
@@ -175,15 +205,41 @@ def _script_to_segments(
             if immersion:
                 # Whole episode is in the target language; the explainer voice
                 # delivers the deeper explanation in the target language.
-                code, voice = target_code, EXPLAIN_VOICE
+                code, voice, lang = target_code, EXPLAIN_VOICE, "target"
             elif run.lang == "target":
                 # A target word quoted inside a native breakdown — target voice
                 # so it is pronounced correctly (not with native phonetics).
-                code, voice = target_code, CONTENT_VOICE
+                code, voice, lang = target_code, CONTENT_VOICE, "target"
             else:
-                code, voice = native_code, EXPLAIN_VOICE
-            segments.append(SpeechSegment(run.text, code, voice, pause_after=gap))
+                code, voice, lang = native_code, EXPLAIN_VOICE, "native"
+            segments.append(
+                SpeechSegment(
+                    run.text,
+                    code,
+                    voice,
+                    pause_after=gap,
+                    cue={"kind": "explanation", "phase": "breakdown", "group": i, "lang": lang},
+                )
+            )
     return segments
+
+
+def _build_transcript(segments: list[SpeechSegment], timings: list) -> list[dict]:
+    """Align speech segments with their measured timings into transcript cues."""
+    cues: list[dict] = []
+    for seg, timing in zip(segments, timings):
+        if seg.cue is None:
+            continue
+        cues.append(
+            {
+                "index": len(cues),
+                **seg.cue,
+                "text": seg.text,
+                "start": round(timing.start, 3),
+                "end": round(timing.end, 3),
+            }
+        )
+    return cues
 
 
 def _open_vocab_mcp(owner: str):
@@ -481,11 +537,14 @@ def _run(
     podcast.audio_filename = os.path.basename(result.path)
     podcast.audio_format = result.format
     podcast.audio_duration_seconds = result.duration_seconds
+    # Timestamped cues so the frontend can highlight/scroll the transcript in
+    # sync with playback and seek by clicking text.
+    podcast.transcript = _build_transcript(segments, result.timings)
     _complete_stage(
         db,
         podcast,
         Stage.GENERATING_AUDIO,
-        f"{result.duration_seconds:.0f}s via {tts.name}",
+        f"{result.duration_seconds:.0f}s via {tts.name}, {len(podcast.transcript)} cues",
     )
     _log_step(
         db,

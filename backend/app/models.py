@@ -63,6 +63,8 @@ class Podcast(Base):
     selected_sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
     adapted_content: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     script: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Timed transcript cues aligned to the audio (karaoke-style sync).
+    transcript: Mapped[list | None] = mapped_column(JSON, nullable=True)
     exercises: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # --- Audio --------------------------------------------------------------

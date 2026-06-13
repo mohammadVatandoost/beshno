@@ -25,7 +25,11 @@ config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers must stay False: migrations run in-process during
+    # app startup (init_db -> alembic upgrade). The default (True) would tear down
+    # uvicorn's and the app's already-configured loggers, silencing all request
+    # and application logs for the life of the server.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

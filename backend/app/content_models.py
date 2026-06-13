@@ -85,6 +85,26 @@ class PodcastScript(BaseModel):
     segments: list[ContentSegment] = Field(default_factory=list)
 
 
+class TranscriptCue(BaseModel):
+    """One timed, voiced piece of the episode, for karaoke-style sync.
+
+    Built after audio synthesis by aligning each spoken segment with its
+    measured position in the track. ``start``/``end`` are seconds into the audio.
+    """
+
+    index: int = Field(description="Position of this cue in playback order")
+    kind: Literal["intro", "full", "breakdown_intro", "segment", "explanation"]
+    phase: Literal["intro", "playback", "breakdown"]
+    group: Optional[int] = Field(
+        default=None,
+        description="Content-segment index this cue belongs to (for grouping/scroll)",
+    )
+    lang: Literal["target", "native"]
+    text: str
+    start: float = Field(description="Start time in the audio, seconds")
+    end: float = Field(description="End time of the spoken text, seconds")
+
+
 class EvaluationScores(BaseModel):
     """Per-dimension quality scores (0..5) produced by the Evaluator agent."""
 

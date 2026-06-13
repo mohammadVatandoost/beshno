@@ -41,6 +41,15 @@ def test_full_pipeline_with_mocks():
     assert podcast.audio_duration_seconds and podcast.audio_duration_seconds > 0
     assert len(podcast.evaluations) >= 1
 
+    # timed transcript cues are produced and aligned to the audio
+    cues = podcast.transcript
+    assert cues, "transcript cues should be produced"
+    starts = [c["start"] for c in cues]
+    assert starts == sorted(starts), "cues should be in non-decreasing start order"
+    assert all(c["end"] <= podcast.audio_duration_seconds + 0.01 for c in cues)
+    assert all(c["start"] <= c["end"] for c in cues)
+    assert {"intro", "full", "segment", "explanation"} <= {c["kind"] for c in cues}
+
     # agent steps are logged per session for step-by-step review
     steps = sorted(podcast.agent_steps, key=lambda s: s.step_index)
     assert steps, "agent steps should be logged"

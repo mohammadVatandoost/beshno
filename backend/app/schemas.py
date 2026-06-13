@@ -13,6 +13,7 @@ from .content_models import (
     ExerciseItemResult,
     PodcastScript,
     Source,
+    TranscriptCue,
 )
 from .enums import CEFRLevel
 
@@ -148,6 +149,7 @@ class PodcastDetail(PodcastSummary):
     selected_sources: Optional[list[Source]] = None
     adapted_content: Optional[AdaptedContent] = None
     script: Optional[PodcastScript] = None
+    transcript: Optional[list[TranscriptCue]] = None
     evaluations: list[EvaluationOut] = Field(default_factory=list)
     exercises: Optional[ExerciseSetOut] = None
     audio_format: str = "wav"

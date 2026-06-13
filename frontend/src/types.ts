@@ -51,6 +51,26 @@ export interface PodcastScript {
   segments: ContentSegment[];
 }
 
+export type CueKind =
+  | "intro"
+  | "full"
+  | "breakdown_intro"
+  | "segment"
+  | "explanation";
+
+export type CuePhase = "intro" | "playback" | "breakdown";
+
+export interface TranscriptCue {
+  index: number;
+  kind: CueKind;
+  phase: CuePhase;
+  group?: number | null;
+  lang: "target" | "native";
+  text: string;
+  start: number;
+  end: number;
+}
+
 export interface EvaluationScores {
   cefr_compliance: number;
   language_balance: number;
@@ -118,6 +138,7 @@ export interface PodcastDetail extends PodcastSummary {
   selected_sources?: Source[] | null;
   adapted_content?: AdaptedContent | null;
   script?: PodcastScript | null;
+  transcript?: TranscriptCue[] | null;
   evaluations: Evaluation[];
   exercises?: ExerciseSet | null;
   audio_format: string;
