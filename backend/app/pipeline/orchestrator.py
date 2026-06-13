@@ -39,6 +39,7 @@ from ..models import AgentStep, Evaluation, Podcast
 from ..providers import get_llm, get_search, get_tts
 from ..providers.tts.base import SpeechSegment
 from ..storage import Storage
+from ..vocabulary import record_terms
 
 log = logging.getLogger(__name__)
 
@@ -185,6 +186,31 @@ def _script_to_segments(
     return segments
 
 
+def _open_vocab_mcp(owner: str):
+    """Start the learned-vocabulary MCP session, or None if unavailable.
+
+    Best-effort: vocabulary avoidance is an optimization, so any failure to start
+    the MCP server is logged and generation proceeds without it.
+    """
+    try:
+        from ..mcp import LearnedVocabMCP
+
+        return LearnedVocabMCP().open()
+    except Exception as exc:  # noqa: BLE001 - avoidance is best-effort
+        log.warning(
+            "learned-vocab MCP unavailable (%s); generating without vocab avoidance",
+            exc,
+        )
+        return None
+
+
+def _close_vocab_mcp(vocab_mcp) -> None:
+    try:
+        vocab_mcp.close()
+    except Exception:  # pragma: no cover - best-effort cleanup
+        pass
+
+
 # --------------------------------------------------------------------------
 # Entry point
 # --------------------------------------------------------------------------
@@ -208,13 +234,17 @@ def generate_podcast(podcast_id: str) -> None:
     )
 
     db = SessionLocal()
+    vocab_mcp = None
     try:
         podcast = db.get(Podcast, podcast_id)
         if podcast is None:
             log.error("generate_podcast: podcast %s not found", podcast_id)
             return
+        # One shared learned-vocabulary MCP session for this generation, queried
+        # by Agent 2 and Agent 3 to avoid repeating previously-taught words.
+        vocab_mcp = _open_vocab_mcp(podcast.owner)
         try:
-            _run(db, podcast, settings, storage, llm, tts)
+            _run(db, podcast, settings, storage, llm, tts, vocab_mcp)
         except Exception as exc:  # noqa: BLE001 - record any failure on the record
             log.exception("Pipeline failed for podcast %s", podcast_id)
             podcast.status = PodcastStatus.FAILED.value
@@ -227,6 +257,8 @@ def generate_podcast(podcast_id: str) -> None:
                 pass
             db.commit()
     finally:
+        if vocab_mcp is not None:
+            _close_vocab_mcp(vocab_mcp)
         db.close()
 
 
@@ -237,6 +269,7 @@ def _run(
     storage: Storage,
     llm,
     tts,
+    vocab_mcp=None,
 ) -> None:
     target = podcast.target_language
     native = podcast.native_language
@@ -314,6 +347,8 @@ def _run(
                 cefr_level=cefr,
                 materials=materials,
                 feedback=feedback_for_content,
+                owner=podcast.owner,
+                learned_vocab_mcp=vocab_mcp,
             )
             podcast.adapted_content = adapted.model_dump()
             podcast.title = adapted.title
@@ -343,6 +378,8 @@ def _run(
                 native_language=native,
                 cefr_level=cefr,
                 feedback=feedback_for_script,
+                owner=podcast.owner,
+                learned_vocab_mcp=vocab_mcp,
             )
             podcast.script = script.model_dump()
             if not podcast.title:
@@ -497,6 +534,24 @@ def _run(
         )
         _append_event(podcast, Stage.EXERCISES, StageState.FAILED, str(exc)[:200])
         db.commit()
+
+    # --- Record newly-taught vocabulary for spaced repetition --------------
+    # Persist this episode's key vocabulary so future podcasts for this user
+    # avoid repeating it. Bookkeeping only — never fail the podcast over it.
+    try:
+        recorded = record_terms(
+            db,
+            owner=podcast.owner,
+            target_language=target,
+            items=[(v.term, v.meaning) for v in adapted.key_vocabulary],
+            podcast_id=podcast.id,
+        )
+        if recorded:
+            log.info("podcast=%s recorded %d new learned word(s)", podcast.id, recorded)
+    except Exception as exc:  # noqa: BLE001 - bookkeeping must not fail the podcast
+        log.warning(
+            "podcast=%s failed to record learned vocabulary: %s", podcast.id, exc
+        )
 
     # --- Done --------------------------------------------------------------
     podcast.current_stage = Stage.DONE.value

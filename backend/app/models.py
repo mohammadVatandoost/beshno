@@ -5,7 +5,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -154,3 +164,28 @@ class ExerciseAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     podcast: Mapped[Podcast] = relationship(back_populates="attempts")
+
+
+class UserLearnedVocabulary(Base):
+    """Difficult words/phrases already taught to a user, for spaced repetition.
+
+    Lets later podcasts avoid re-introducing the same vocabulary. Scoped by
+    ``owner`` (user id) and ``target_language`` so a learner studying two
+    languages keeps separate word histories. ``podcast_id`` is a soft reference
+    (no FK) so a learned word survives deletion of the podcast that taught it.
+    """
+
+    __tablename__ = "user_learned_vocabulary"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner", "target_language", "term", name="uq_learned_vocab_owner_lang_term"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    owner: Mapped[str] = mapped_column(String(64), index=True)
+    target_language: Mapped[str] = mapped_column(String(64), index=True)
+    term: Mapped[str] = mapped_column(String(255))
+    meaning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    podcast_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
