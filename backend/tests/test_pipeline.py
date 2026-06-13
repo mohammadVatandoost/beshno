@@ -82,6 +82,21 @@ def test_api_create_status_and_audio():
         assert body["cefr_levels"] == ["A1", "A2", "B1", "B2", "C1", "C2"]
         assert body["providers"]["llm"] == "mock"
 
+        assert body["durations"] == [5, 10, 20, 30]
+
+        # invalid duration is rejected
+        bad = client.post(
+            "/api/podcasts",
+            json={
+                "native_language": "English",
+                "target_language": "French",
+                "cefr_level": "B1",
+                "topic_description": "black holes",
+                "duration_minutes": 7,
+            },
+        )
+        assert bad.status_code == 422
+
         resp = client.post(
             "/api/podcasts",
             json={
@@ -90,10 +105,12 @@ def test_api_create_status_and_audio():
                 "cefr_level": "B1",
                 "topic_category": "Science",
                 "topic_description": "black holes",
+                "duration_minutes": 20,
             },
         )
         assert resp.status_code == 201
         pid = resp.json()["id"]
+        assert resp.json()["duration_minutes"] == 20
 
         # BackgroundTasks run synchronously within the TestClient request.
         status = client.get(f"/api/podcasts/{pid}/status")

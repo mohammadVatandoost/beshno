@@ -23,7 +23,7 @@ from ..content_models import (
     ExplanationRun,
     PodcastScript,
 )
-from ..enums import is_immersion_level
+from ..enums import DEFAULT_DURATION_MINUTES, duration_plan, is_immersion_level
 from .base import Agent
 
 SYSTEM_PROMPT_DUAL = """\
@@ -115,8 +115,10 @@ class ScriptwriterAgent(Agent):
         feedback: str | None = None,
         owner: str = "default",
         learned_vocab_mcp=None,
+        duration_minutes: int = DEFAULT_DURATION_MINUTES,
     ) -> PodcastScript:
         immersion = is_immersion_level(cefr_level)
+        plan = duration_plan(duration_minutes)
         vocab = "\n".join(f"- {v.term}: {v.meaning}" for v in adapted.key_vocabulary)
         points = "\n".join(f"- {p}" for p in adapted.key_points)
         feedback_block = (
@@ -138,11 +140,18 @@ class ScriptwriterAgent(Agent):
             else f"Mode: DUAL-LANGUAGE (level {cefr_level}) — target content with "
             f"{native_language} breakdowns."
         )
+        length_line = (
+            f"Target runtime: ~{duration_minutes} minutes — produce about "
+            f"{plan['segments']} segments covering the full adapted content. Do not "
+            f"pad or invent material to fill time, and do not drop content to save "
+            f"time; chunk the adapted text into roughly that many segments."
+        )
         user = (
             f"Target (learning) language: {target_language}\n"
             f"Learner's native language: {native_language}\n"
             f"CEFR level: {cefr_level}\n"
-            f"{mode_line}\n\n"
+            f"{mode_line}\n"
+            f"{length_line}\n\n"
             f"Title: {adapted.title}\n\n"
             f"Adapted content (in {target_language}):\n{adapted.adapted_text}\n\n"
             f"Key points:\n{points}\n\n"

@@ -125,6 +125,7 @@ export interface PodcastSummary {
   cefr_level: string;
   topic_category?: string | null;
   topic_description: string;
+  duration_minutes: number;
   title?: string | null;
   status: PodcastStatus;
   current_stage: string;
@@ -156,6 +157,7 @@ export interface Meta {
   topic_categories: string[];
   languages: string[];
   cefr_levels: string[];
+  durations: number[];
   providers: Providers;
   max_revisions: number;
 }
@@ -166,6 +168,7 @@ export interface CreatePayload {
   cefr_level: string;
   topic_category?: string | null;
   topic_description: string;
+  duration_minutes: number;
 }
 
 export const TERMINAL_STATUSES: PodcastStatus[] = [

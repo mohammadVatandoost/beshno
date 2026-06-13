@@ -15,7 +15,7 @@ from .content_models import (
     Source,
     TranscriptCue,
 )
-from .enums import CEFRLevel
+from .enums import CEFRLevel, DEFAULT_DURATION_MINUTES, PODCAST_DURATIONS
 
 
 # --------------------------------------------------------------------------
@@ -27,11 +27,20 @@ class PodcastCreate(BaseModel):
     cefr_level: CEFRLevel
     topic_category: Optional[str] = Field(default=None, max_length=120)
     topic_description: str = Field(min_length=3, max_length=2000)
+    duration_minutes: int = Field(default=DEFAULT_DURATION_MINUTES)
 
     @field_validator("native_language", "target_language", "topic_description")
     @classmethod
     def _strip(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("duration_minutes")
+    @classmethod
+    def _valid_duration(cls, v: int) -> int:
+        if v not in PODCAST_DURATIONS:
+            allowed = ", ".join(str(d) for d in PODCAST_DURATIONS)
+            raise ValueError(f"duration_minutes must be one of: {allowed}")
+        return v
 
 
 # --------------------------------------------------------------------------
@@ -120,6 +129,7 @@ class PodcastSummary(BaseModel):
     cefr_level: str
     topic_category: Optional[str] = None
     topic_description: str
+    duration_minutes: int = DEFAULT_DURATION_MINUTES
     title: Optional[str] = None
     status: str
     current_stage: str
@@ -170,5 +180,6 @@ class MetaOut(BaseModel):
     topic_categories: list[str]
     languages: list[str]
     cefr_levels: list[str]
+    durations: list[int]
     providers: ProviderInfo
     max_revisions: int

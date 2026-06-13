@@ -8,6 +8,7 @@ vocabulary, grammar and sentence complexity with the learner's CEFR level
 from __future__ import annotations
 
 from ..content_models import AdaptedContent, KeyVocab
+from ..enums import DEFAULT_DURATION_MINUTES, duration_plan
 from .base import Agent
 
 _CEFR_GUIDANCE = {
@@ -28,7 +29,9 @@ CEFR level. Requirements:
 
 - Keep it factual and faithful to the sources. Do NOT invent facts.
 - Strictly match the CEFR level for vocabulary, grammar and sentence length.
-- Keep it focused and self-contained (roughly 3-5 short pages maximum).
+- Size the adapted text to the requested target length (given below) so the
+  finished episode runs close to the chosen duration — shorter for a quick
+  episode, longer for an in-depth one. Keep it focused and self-contained.
 - Produce: a short title, the adapted text, 3-6 key points, and a list of
   key vocabulary terms with concise explanations in the learner's NATIVE
   language.
@@ -54,8 +57,15 @@ class ContentAdapterAgent(Agent):
         feedback: str | None = None,
         owner: str = "default",
         learned_vocab_mcp=None,
+        duration_minutes: int = DEFAULT_DURATION_MINUTES,
     ) -> AdaptedContent:
         guidance = _CEFR_GUIDANCE.get(cefr_level, "")
+        plan = duration_plan(duration_minutes)
+        length_block = (
+            f"\n\nTARGET LENGTH — the user chose a ~{duration_minutes}-minute episode. "
+            f"Write the adapted text to about {plan['target_words']} words (±15%) of "
+            f"target-language content so the finished audio lands near that runtime."
+        )
         feedback_block = (
             f"\n\nREVISION FEEDBACK to address:\n{feedback}\n" if feedback else ""
         )
@@ -74,6 +84,7 @@ class ContentAdapterAgent(Agent):
             f"Learner's native language: {native_language}\n"
             f"CEFR level: {cefr_level} — {guidance}\n\n"
             f"Source material (from selected resources):\n{materials[:16000]}"
+            f"{length_block}"
             f"{feedback_block}"
             f"{avoid_block}"
         )
