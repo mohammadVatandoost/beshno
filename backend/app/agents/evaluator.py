@@ -14,6 +14,7 @@ from ..content_models import (
     EvaluationScores,
     PodcastScript,
 )
+from ..enums import is_immersion_level
 from .base import Agent
 
 # A script passes when no dimension is critically weak and the average is solid.
@@ -73,15 +74,31 @@ class EvaluatorAgent(Agent):
             f"    NATIVE: {render_explanation(seg.native_explanation)}"
             for i, seg in enumerate(script.segments)
         )
+        immersion = is_immersion_level(cefr_level)
         rendered = (
-            f"INTRO (native): {script.intro}\n"
-            f"BREAKDOWN CUE (native): {script.breakdown_intro}\n\n"
-            f"SEGMENTS (target chunk + native breakdown):\n{rendered_segments}"
+            f"INTRO: {script.intro}\n"
+            f"BREAKDOWN CUE: {script.breakdown_intro}\n\n"
+            f"SEGMENTS (target chunk + breakdown):\n{rendered_segments}"
         )
+        if immersion:
+            mode_note = (
+                "MODE: FULL IMMERSION (advanced level). The episode MUST be 100% in "
+                "the target language — intro, cues and every breakdown included — "
+                "with NO native language anywhere. For language_balance, heavily "
+                "penalize ANY native-language usage; breakdowns should be deeper "
+                "conceptual explanations in the target language."
+            )
+        else:
+            mode_note = (
+                "MODE: DUAL-LANGUAGE. Target-language content with native-language "
+                "breakdowns after each chunk; target words quoted inside a breakdown "
+                "are marked <like this>."
+            )
         user = (
             f"Target (learning) language: {target_language}\n"
             f"Learner's native language: {native_language}\n"
-            f"Target CEFR level: {cefr_level}\n\n"
+            f"Target CEFR level: {cefr_level}\n"
+            f"{mode_note}\n\n"
             f"Adapted source content (ground truth for factual accuracy):\n"
             f"{adapted.adapted_text}\n\n"
             f"Script to evaluate:\n{rendered}\n\n"

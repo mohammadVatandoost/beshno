@@ -1,17 +1,18 @@
 """Agent 3 — Scriptwriter.
 
-Turns the adapted summary into a DUAL-LANGUAGE, two-phase episode designed for
-language comprehension:
+Turns the adapted summary into a two-phase episode whose language strategy
+adapts to the learner's CEFR level:
 
-- Phase 1 (full playback): the whole content read smoothly and uninterrupted in
-  the target (learning) language.
-- Phase 2 (segmented translation): the same content revisited section by
-  section — after each short target-language chunk, a breakdown/explanation in
-  the learner's native language.
+- A1 / A2 / B1 — DUAL-LANGUAGE. Phase 1 reads the whole content in the target
+  language; Phase 2 revisits it chunk by chunk, each followed by a breakdown in
+  the learner's NATIVE language.
+- B2 / C1 / C2 — FULL IMMERSION. Everything (intro, cues, content and the
+  deeper explanations) is 100% in the TARGET language; the native language is
+  omitted entirely.
 
-The script is a list of ``ContentSegment``s (target chunk + native breakdown);
-the orchestrator reads all target chunks first (Phase 1), then replays each
-chunk followed by its breakdown (Phase 2).
+The script is a list of ``ContentSegment``s (target chunk + a breakdown made of
+language-tagged ``ExplanationRun``s). In immersion mode every run is
+``lang="target"``.
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ from ..content_models import (
     ExplanationRun,
     PodcastScript,
 )
+from ..enums import is_immersion_level
 from .base import Agent
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_DUAL = """\
 You are Agent 3, the Scriptwriter, in a language-learning podcast pipeline.
 
 Turn the adapted content into a DUAL-LANGUAGE, two-phase podcast. The audio will
@@ -65,6 +67,40 @@ Rules:
 If revision feedback is provided, address every point in it.
 """
 
+SYSTEM_PROMPT_IMMERSION = """\
+You are Agent 3, the Scriptwriter, in a language-learning podcast pipeline.
+
+The learner is ADVANCED, so this episode is FULL IMMERSION: write and present
+EVERYTHING 100% in the TARGET (learning) language. Do NOT use the learner's
+native language anywhere. The audio first reads the whole text, then revisits it
+section by section with a deeper explanation after each part — all in the target
+language. Produce:
+
+- intro: a short spoken introduction IN THE TARGET LANGUAGE. Welcome the
+  listener, name the topic, and explain the format.
+- breakdown_intro: a short TARGET-LANGUAGE cue spoken between the two phases.
+- segments: an ordered list that, read end to end, conveys the full adapted
+  content in the TARGET language. Each segment has:
+    - target_text: ONE short, self-contained chunk (about 1-3 sentences) in the
+      TARGET language, at the learner's CEFR level.
+    - native_explanation: a DEEPER explanation of THAT chunk, written ENTIRELY in
+      the TARGET language — rephrase it more simply, expand on nuance, define
+      difficult words using easier target-language words, add relevant context.
+      Give it as a list of runs; EVERY run MUST have lang="target". Never use the
+      native language.
+
+Rules:
+- Everything — intro, breakdown_intro, target_text and every explanation run — is
+  in the TARGET language. Do not use the native language at all.
+- Every native_explanation run MUST be lang="target".
+- Keep target_text within the CEFR level; explanations may use richer language
+  appropriate for an advanced learner, but stay in the target language.
+- The concatenation of all target_text must read smoothly and stay faithful to
+  the adapted content.
+
+If revision feedback is provided, address every point in it.
+"""
+
 
 class ScriptwriterAgent(Agent):
     name = "scriptwriter"
@@ -78,15 +114,24 @@ class ScriptwriterAgent(Agent):
         cefr_level: str,
         feedback: str | None = None,
     ) -> PodcastScript:
+        immersion = is_immersion_level(cefr_level)
         vocab = "\n".join(f"- {v.term}: {v.meaning}" for v in adapted.key_vocabulary)
         points = "\n".join(f"- {p}" for p in adapted.key_points)
         feedback_block = (
             f"\n\nREVISION FEEDBACK to address:\n{feedback}\n" if feedback else ""
         )
+        mode_line = (
+            f"Mode: FULL IMMERSION (level {cefr_level} is advanced) — everything "
+            f"must be in {target_language}; do not use {native_language} at all."
+            if immersion
+            else f"Mode: DUAL-LANGUAGE (level {cefr_level}) — target content with "
+            f"{native_language} breakdowns."
+        )
         user = (
             f"Target (learning) language: {target_language}\n"
             f"Learner's native language: {native_language}\n"
-            f"CEFR level: {cefr_level}\n\n"
+            f"CEFR level: {cefr_level}\n"
+            f"{mode_line}\n\n"
             f"Title: {adapted.title}\n\n"
             f"Adapted content (in {target_language}):\n{adapted.adapted_text}\n\n"
             f"Key points:\n{points}\n\n"
@@ -94,10 +139,11 @@ class ScriptwriterAgent(Agent):
             f"{feedback_block}"
         )
 
-        mock = self._mock(adapted, target_language, native_language, cefr_level)
+        system = SYSTEM_PROMPT_IMMERSION if immersion else SYSTEM_PROMPT_DUAL
+        mock = self._mock(adapted, target_language, native_language, cefr_level, immersion)
 
         return self.llm.structured(
-            system=SYSTEM_PROMPT,
+            system=system,
             user=user,
             schema=PodcastScript,
             mock_example=mock,
@@ -110,6 +156,7 @@ class ScriptwriterAgent(Agent):
         target_language: str,
         native_language: str,
         cefr_level: str,
+        immersion: bool,
     ) -> PodcastScript:
         # Split the adapted text into a few sentence-ish chunks; fall back to key
         # points or the title so there is always at least one segment.
@@ -124,16 +171,33 @@ class ScriptwriterAgent(Agent):
         segments: list[ContentSegment] = []
         for i, chunk in enumerate(chunks):
             v = vocab[i % len(vocab)] if vocab else None
-            runs = [
-                ExplanationRun(
-                    lang="native",
-                    text=f"[in {native_language}] This part means: {chunk}.",
-                )
-            ]
-            if v:
-                runs.append(ExplanationRun(lang="native", text="Note the word"))
-                runs.append(ExplanationRun(lang="target", text=v.term))
-                runs.append(ExplanationRun(lang="native", text=f"— {v.meaning}."))
+            if immersion:
+                # Everything in the target language; the explanation is a deeper
+                # target-language paraphrase.
+                runs = [
+                    ExplanationRun(
+                        lang="target",
+                        text=f"[in {target_language}] In other words: {chunk}.",
+                    )
+                ]
+                if v:
+                    runs.append(
+                        ExplanationRun(
+                            lang="target",
+                            text=f"[in {target_language}] '{v.term}' means {v.meaning}.",
+                        )
+                    )
+            else:
+                runs = [
+                    ExplanationRun(
+                        lang="native",
+                        text=f"[in {native_language}] This part means: {chunk}.",
+                    )
+                ]
+                if v:
+                    runs.append(ExplanationRun(lang="native", text="Note the word"))
+                    runs.append(ExplanationRun(lang="target", text=v.term))
+                    runs.append(ExplanationRun(lang="native", text=f"— {v.meaning}."))
             segments.append(
                 ContentSegment(
                     target_text=f"[in {target_language}] {chunk}.",
@@ -141,15 +205,25 @@ class ScriptwriterAgent(Agent):
                 )
             )
 
-        return PodcastScript(
-            title=adapted.title,
-            intro=(
+        if immersion:
+            intro = (
+                f"[in {target_language}] Welcome! Today's topic is "
+                f"\"{adapted.title}\". First the whole text, then a closer look."
+            )
+            breakdown_intro = f"[in {target_language}] Now, section by section."
+        else:
+            intro = (
                 f"[in {native_language}] Welcome! Today's topic is "
                 f"\"{adapted.title}\". First, listen to the whole text in "
                 f"{target_language}. Then we'll go through it piece by piece."
-            ),
-            breakdown_intro=(
+            )
+            breakdown_intro = (
                 f"[in {native_language}] Now let's break it down section by section."
-            ),
+            )
+
+        return PodcastScript(
+            title=adapted.title,
+            intro=intro,
+            breakdown_intro=breakdown_intro,
             segments=segments,
         )

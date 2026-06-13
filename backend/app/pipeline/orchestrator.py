@@ -26,7 +26,13 @@ from ..agents import (
 from ..config import Settings, get_settings
 from ..content_models import PodcastScript
 from ..database import SessionLocal
-from ..enums import PodcastStatus, Stage, StageState, STAGE_LABELS
+from ..enums import (
+    PodcastStatus,
+    Stage,
+    StageState,
+    STAGE_LABELS,
+    is_immersion_level,
+)
 from ..languages import to_bcp47
 from ..models import AgentStep, Evaluation, Podcast
 from ..providers import get_llm, get_search, get_tts
@@ -115,57 +121,65 @@ def _format_feedback(feedback: str, issues: list[str]) -> str:
 
 
 def _script_to_segments(
-    script: PodcastScript, target_language: str, native_language: str
+    script: PodcastScript,
+    target_language: str,
+    native_language: str,
+    immersion: bool = False,
 ) -> list[SpeechSegment]:
-    """Build the dual-language, two-phase audio track.
+    """Build the two-phase audio track.
 
-    1. Native-language intro (explains the format).
+    1. Intro (explains the format).
     2. Full playback: every segment's target text, read near-seamlessly.
-    3. Native-language cue introducing the breakdown.
-    4. Segmented translation: each target chunk, then its native breakdown,
-       with a clear pause before the next chunk.
+    3. Cue introducing the breakdown.
+    4. Each target chunk, then its breakdown, with a clear pause between chunks.
 
-    The target language uses a female voice (learner), the native language a
-    male voice (teacher/explainer).
+    Content uses a female voice, the explainer a male voice. In dual-language
+    mode (A1-B1) the intro/cues/breakdowns are native-language; in immersion mode
+    (B2+) the entire track is in the target language.
     """
     target_code = to_bcp47(target_language)
     native_code = to_bcp47(native_language)
-    TARGET_VOICE = "female"
-    NATIVE_VOICE = "male"
+    CONTENT_VOICE = "female"  # learner / content voice
+    EXPLAIN_VOICE = "male"  # teacher / explainer voice
+    cue_code = target_code if immersion else native_code
     segments: list[SpeechSegment] = []
 
     if script.intro.strip():
         segments.append(
-            SpeechSegment(script.intro, native_code, NATIVE_VOICE, pause_after=0.7)
+            SpeechSegment(script.intro, cue_code, EXPLAIN_VOICE, pause_after=0.7)
         )
 
-    # Phase 1 — full playback, uninterrupted (tiny gaps between chunks).
+    # Phase 1 — full playback in the target language, uninterrupted.
     for seg in script.segments:
         if seg.target_text.strip():
             segments.append(
-                SpeechSegment(seg.target_text, target_code, TARGET_VOICE, pause_after=0.12)
+                SpeechSegment(seg.target_text, target_code, CONTENT_VOICE, pause_after=0.12)
             )
 
     if script.breakdown_intro.strip():
         segments.append(
-            SpeechSegment(script.breakdown_intro, native_code, NATIVE_VOICE, pause_after=0.7)
+            SpeechSegment(script.breakdown_intro, cue_code, EXPLAIN_VOICE, pause_after=0.7)
         )
 
-    # Phase 2 — each chunk, then its breakdown. The breakdown is voiced run by
-    # run: target-language words use the target voice (correct pronunciation)
-    # instead of the native voice reading them with native phonetics.
+    # Phase 2 — each chunk, then its breakdown.
     for seg in script.segments:
         if seg.target_text.strip():
             segments.append(
-                SpeechSegment(seg.target_text, target_code, TARGET_VOICE, pause_after=0.25)
+                SpeechSegment(seg.target_text, target_code, CONTENT_VOICE, pause_after=0.25)
             )
         runs = [r for r in seg.native_explanation if r.text.strip()]
         for j, run in enumerate(runs):
-            is_target = run.lang == "target"
-            code = target_code if is_target else native_code
-            voice = TARGET_VOICE if is_target else NATIVE_VOICE
-            # near-seamless between runs; a clear pause after the final run
             gap = 0.8 if j == len(runs) - 1 else 0.06
+            if immersion:
+                # Whole episode is in the target language; the explainer voice
+                # delivers the deeper explanation in the target language.
+                code, voice = target_code, EXPLAIN_VOICE
+            elif run.lang == "target":
+                # A target word quoted inside a native breakdown — target voice
+                # so it is pronounced correctly (not with native phonetics).
+                code, voice = target_code, CONTENT_VOICE
+            else:
+                code, voice = native_code, EXPLAIN_VOICE
             segments.append(SpeechSegment(run.text, code, voice, pause_after=gap))
     return segments
 
@@ -415,7 +429,9 @@ def _run(
     # --- Stage 6: audio generation -----------------------------------------
     _start_stage(db, podcast, Stage.GENERATING_AUDIO)
     t0 = time.perf_counter()
-    segments = _script_to_segments(script, target, native)
+    segments = _script_to_segments(
+        script, target, native, immersion=is_immersion_level(cefr)
+    )
     out_path = storage.audio_path(podcast.id, "wav")
     log.info(
         "podcast=%s synthesizing %d segment(s) via %s",

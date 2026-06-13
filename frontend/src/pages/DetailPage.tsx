@@ -88,6 +88,9 @@ export default function DetailPage() {
               {p.native_language}
             </span>
             <span className="chip">Level {p.cefr_level}</span>
+            {["B2", "C1", "C2"].includes(p.cefr_level) && (
+              <span className="chip">🎯 Immersion · target language only</span>
+            )}
             {p.topic_category && <span className="chip">{p.topic_category}</span>}
             <StatusBadge status={p.status} />
             <span className="chip-muted">Created {formatDate(p.created_at)}</span>
