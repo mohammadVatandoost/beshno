@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Path to a Google service-account JSON (also read by the google client lib
     # via GOOGLE_APPLICATION_CREDENTIALS).
     google_application_credentials: str | None = None
+    # Alternatively, a Google API key for Text-to-Speech (no service account).
+    google_api_key: str | None = None
 
     # --- Pipeline behaviour -------------------------------------------------
     # Number of evaluator-driven revision cycles before giving up / flagging.
@@ -67,7 +69,7 @@ class Settings(BaseSettings):
         creds = self.google_application_credentials or os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
-        return "google" if creds else "mock"
+        return "google" if (self.google_api_key or creds) else "mock"
 
 
 @lru_cache

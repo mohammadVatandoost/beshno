@@ -30,8 +30,10 @@ services:
       SEARCH_PROVIDER: ${SEARCH_PROVIDER:-auto}
       TAVILY_API_KEY: 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
       TTS_PROVIDER: ${TTS_PROVIDER:-auto}
-      # To use Google TTS in Docker, mount the JSON below and point this at it.
-      GOOGLE_APPLICATION_CREDENTIALS: AIzaSyDvInlmV7yrdWD3wvImV_JxcoEGE4pGWSk
+      # Google TTS auth — an API key, OR a service-account JSON path
+      # (GOOGLE_APPLICATION_CREDENTIALS; mount the file via the volume below).
+      GOOGLE_API_KEY: AIzaSyDvInlmV7yrdWD3wvImV_JxcoEGE4pGWSk
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
       MAX_REVISIONS: ${MAX_REVISIONS:-2}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
       STORAGE_DIR: /data

@@ -21,12 +21,19 @@ _TURN_GAP_SECONDS = 0.45
 class GoogleTTS:
     name = "google"
 
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None) -> None:
         # Imported lazily so the package isn't a hard dependency for mock runs.
         from google.cloud import texttospeech
 
         self._tts = texttospeech
-        self._client = texttospeech.TextToSpeechClient()
+        if api_key:
+            # API-key auth — no service-account JSON required.
+            self._client = texttospeech.TextToSpeechClient(
+                client_options={"api_key": api_key}
+            )
+        else:
+            # Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS, etc.).
+            self._client = texttospeech.TextToSpeechClient()
 
     def synthesize(
         self, segments: list[SpeechSegment], *, out_path: str

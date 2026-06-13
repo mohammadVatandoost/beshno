@@ -182,7 +182,7 @@ Open <http://localhost:5173>, click **New podcast**, and create one.
 | ------------------- | ------------------------------------------------ | ----- |
 | **Claude (LLM)**    | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`           | Default model `claude-opus-4-8`. Uses structured outputs + adaptive thinking. |
 | **Tavily (search)** | `TAVILY_API_KEY`                                 | Topic research. |
-| **Google TTS**      | `GOOGLE_APPLICATION_CREDENTIALS` (path to JSON)  | Service account with the Text-to-Speech API enabled. |
+| **Google TTS**      | `GOOGLE_API_KEY` **or** `GOOGLE_APPLICATION_CREDENTIALS` | An API key with the Text-to-Speech API enabled, or a service-account JSON path (ADC). |
 
 Provider selection is `auto` by default: each provider is used when its
 credential is present, otherwise the mock is used. Force a provider with
@@ -251,6 +251,7 @@ transparency and tuning.
 | `TAVILY_API_KEY`                 | —                                         | Tavily key                       |
 | `SEARCH_MAX_RESULTS`             | `10`                                      | Results fetched before filtering |
 | `TTS_PROVIDER`                   | `auto`                                    | `auto` \| `google` \| `mock`     |
+| `GOOGLE_API_KEY`                 | —                                         | Google API key for TTS (alternative to the JSON) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | —                                         | Path to Google service-account JSON |
 | `MAX_REVISIONS`                  | `2`                                       | Evaluator revision cycles        |
 | `STORAGE_DIR`                    | `./storage`                               | Where audio files are written    |

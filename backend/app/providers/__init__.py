@@ -68,7 +68,7 @@ def get_tts(settings: Settings | None = None) -> TTSProvider:
         try:
             from .tts.google import GoogleTTS
 
-            return GoogleTTS()
+            return GoogleTTS(api_key=settings.google_api_key)
         except Exception as exc:
             log.warning(
                 "Failed to initialise Google Cloud TTS (%s); using mock TTS. "
